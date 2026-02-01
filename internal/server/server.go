@@ -7,12 +7,15 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"waze/internal/config"
 	"waze/internal/graph"
 	"waze/internal/types"
 )
 
 type Server struct {
 	Graph *graph.Graph
+
+	Cache *RouteCache
 }
 
 func NewServer(mapFile string) *Server {
@@ -20,7 +23,10 @@ func NewServer(mapFile string) *Server {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return &Server{Graph: g}
+	return &Server{
+		Graph: g,
+		Cache: NewRouteCache(config.Global.Server.CacheTtl),
+	}
 }
 
 func (s *Server) HandleTrafficBatch(w http.ResponseWriter, r *http.Request) {
@@ -125,23 +131,39 @@ func (s *Server) HandleNavigation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid 'from' or 'to' parameters", http.StatusBadRequest)
 		return
 	}
-	req := PathRequest{
-		StartNodeId:     fromId,
-		EndNodeId:       toId,
-		ResponseChannel: make(chan PathResult),
-	}
 
-	JobQueue <- req
-
-	result := <-req.ResponseChannel
-
-	// if no route was found
-	if result.Err != nil {
-		fmt.Printf("The Error is: %s\n", result.Err.Error())
-		http.Error(w, result.Err.Error(), http.StatusNotFound)
+	// check if the route is in cache
+	if cachedResponse, exists := s.Cache.Get(fromId, toId); exists {
+		fmt.Println("The route is from the cache")
+		// send response
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cachedResponse)
 		return
-	}
+	} else {
+		// else create a request to calculate the route
+		req := PathRequest{
+			StartNodeId:     fromId,
+			EndNodeId:       toId,
+			ResponseChannel: make(chan PathResult),
+		}
+		// send request
+		JobQueue <- req
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result.Response)
+		// wait for result
+		result := <-req.ResponseChannel
+
+		// if no route was found
+		if result.Err != nil {
+			fmt.Printf("The Error is: %s\n", result.Err.Error())
+			http.Error(w, result.Err.Error(), http.StatusNotFound)
+			return
+		}
+
+		// store in cache
+		s.Cache.Set(fromId, toId, result.Response)
+
+		// send response
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result.Response)
+	}
 }

@@ -1,7 +1,8 @@
 {
     "server": {
         "server_port":":8080",
-        "map_file":"data/filtered_shoham.json"
+        "map_file":"data/filtered_shoham.json",
+        "cache_ttl":5
     },
     "simulation": {
         "server_url":"http://localhost",
