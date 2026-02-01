@@ -10,8 +10,9 @@ import (
 
 type Config struct {
 	Server struct {
-		Port    string `json:"server_port"`
-		MapFile string `json:"map_file"`
+		Port     string `json:"server_port"`
+		MapFile  string `json:"map_file"`
+		CacheTtl int    `json:"cache_ttl"`
 	} `json:"server"`
 
 	Simulation struct {
