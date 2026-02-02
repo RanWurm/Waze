@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"time"
 	"waze/internal/config"
 	"waze/internal/graph"
 	"waze/internal/types"
@@ -39,7 +38,7 @@ func NewServer(mapFile string) *Server {
 }
 
 func (s *Server) HandleTrafficBatch(w http.ResponseWriter, r *http.Request) {
-	defer config.TimeTrack(time.Now(), "HandleTrafficBatch")
+	// defer config.TimeTrack(time.Now(), "HandleTrafficBatch")
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST request allowed", http.StatusMethodNotAllowed)

@@ -8,7 +8,9 @@
         "server_url":"http://localhost",
         "num_cars":1000,
         "spawn_rate":2.0,
-        "report_interval":5
+        "report_interval":5,
+        "end_spawn":200.0,
+        "delta_time":1.0
     },
     "physics": {
         "car_length_km": 0.005,
@@ -17,5 +19,5 @@
         "alpha": 0.2,
         "edge_density": 0.3
     },
-    "max_cpus":16
+    "max_cpus":8
 }

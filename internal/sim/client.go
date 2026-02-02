@@ -29,7 +29,7 @@ func NewClient(url string) *Client {
 
 const minReportsPerRequest = 500
 
-// send all traffic report from al cars to server
+// send all traffic report from all cars to server
 func (c *Client) SendTrafficBatch(reports []types.TrafficReport) error {
 	jsonData, _ := json.Marshal(reports)
 	resp, err := c.Http.Post(c.BaseURL+"/api/traffic", "application/json", bytes.NewBuffer(jsonData))

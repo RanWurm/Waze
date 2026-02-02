@@ -20,6 +20,8 @@ type Config struct {
 		NumCars        int     `json:"num_cars"`
 		SpawnRate      float64 `json:"spawn_rate"`
 		ReportInterval float64 `json:"report_interval"`
+		EndSpawn       float64 `json:"end_spawn"`
+		DeltaTime      float64 `json:"delta_time"`
 	} `json:"simulation"`
 
 	Physics struct {

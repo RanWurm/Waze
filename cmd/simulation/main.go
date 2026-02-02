@@ -16,23 +16,15 @@ func main() {
 		panic(err)
 	}
 
-	var numCPUs int
-	// boundary check for CPUs num
-	if config.Global.MaxCPUs > 0 && config.Global.MaxCPUs <= runtime.NumCPU() {
-		// set number of CPUs
-		numCPUs = config.Global.MaxCPUs
-		fmt.Printf("System Limit: Running on %d logical cores\n", numCPUs)
-	} else {
-		numCPUs = runtime.NumCPU()
-		fmt.Printf("System Limit: Running on ALL available cores (%d)\n", numCPUs)
-	}
+	// init processors
+	setupSystemResources()
 
 	world, err := sim.NewWorld(config.Global.Server.MapFile, (config.Global.Simulation.ServerURL + config.Global.Server.Port))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	sim.StartMoveWorkers(numCPUs)
+	sim.StartMoveWorkers(runtime.GOMAXPROCS(0))
 
 	numCars := config.Global.Simulation.NumCars
 
@@ -48,14 +40,13 @@ func main() {
 	// 		}
 	// 		break
 	// 	}
-	// 	car := world.AddCar(i, i)
-	// 	car.InitRoute(route, world.Graph)
+	// car := world.AddCar(i, i)
+	// car.InitRoute(route, world.Graph)
 	// }
 
 	start := time.Now()
-
-	dt := 1.0
-	loop(numCars, dt, world)
+	StartSim(world, numCars)
+	// loop(numCars, dt, world)
 
 	fmt.Println("Simulation Finished!")
 	fmt.Printf("total run time: %v\n", time.Since(start))
@@ -82,8 +73,6 @@ func loop(carCounter int, dt float64, world *sim.World) {
 
 		world.Tick(dt)
 		world.CleanArrivedCars()
-
-		carCounter = RunStressTest(world, carCounter)
 
 		// if world.SimTime-lastSpawnTime >= config.Global.Simulation.SpawnRate && world.SimTime < (120.0) {
 		// 	lastSpawnTime = world.SimTime
@@ -112,6 +101,20 @@ func loop(carCounter int, dt float64, world *sim.World) {
 		// }
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func setupSystemResources() {
+	var numCPUs int
+	// boundary check for CPUs num
+	if config.Global.MaxCPUs > 0 && config.Global.MaxCPUs <= runtime.NumCPU() {
+		// set number of CPUs
+		numCPUs = config.Global.MaxCPUs
+		fmt.Printf("System Limit: Running on %d logical cores\n", numCPUs)
+	} else {
+		numCPUs = runtime.NumCPU()
+		fmt.Printf("System Limit: Running on ALL available cores (%d)\n", numCPUs)
+	}
+	runtime.GOMAXPROCS(numCPUs)
 }
 
 // go func() {
