@@ -26,6 +26,22 @@ func GenerateFixedRouteJSON() ([]byte, error) {
 
 	return json.MarshalIndent(route, "", "  ")
 }
+func RandomRequest(g *graph.Graph, rng *rand.Rand) (int, int) {
+	// not enough nodes in the graph
+	if len(g.NodesArr) < 2 {
+		return -1, -1
+	}
+
+	// sample two nodes, src and dst
+	idx1 := rng.Intn(len(g.NodesArr))
+	idx2 := rng.Intn(len(g.NodesArr))
+
+	if idx1 == idx2 {
+		idx2 = rng.Intn(len(g.NodesArr))
+	}
+
+	return g.NodesArr[idx1], g.NodesArr[idx2]
+}
 
 func GenarateRandomRoute(g *graph.Graph, steps int) []int {
 	var currentMsgNode int

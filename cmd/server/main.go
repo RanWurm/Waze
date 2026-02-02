@@ -13,12 +13,25 @@ func main() {
 	if err := config.Load("config.json"); err != nil {
 		panic(err)
 	}
-	fmt.Printf("Hello Waze!, map file is: %s\n", config.Global.Server.MapFile)
+	// fmt.Printf("Hello Waze!, map file is: %s\n", config.Global.Server.MapFile)
 	srv := server.NewServer(config.Global.Server.MapFile)
-	fmt.Printf("The num of cores is: %d\n", runtime.NumCPU())
+	var numCPU int
+	// boundary check for CPU size
+	if config.Global.MaxCPUs > 0 && config.Global.MaxCPUs <= runtime.NumCPU() {
+		// set number of CPUs
+		numCPU = config.Global.MaxCPUs
+		fmt.Printf("System Limit: Running on %d logical cores\n", numCPU)
+	} else {
+		numCPU = runtime.NumCPU()
+		fmt.Printf("System Limit: Running on ALL available cores (%d)\n", numCPU)
+	}
 
-	server.WakeWorkers(runtime.NumCPU(), srv.Graph)
-	
+	// set number of CPU
+	runtime.GOMAXPROCS(numCPU)
+
+	// wake 'numCPU' workers
+	server.WakeWorkers(numCPU, srv.Graph)
+
 	// הפעלת WebSocket Hub
 	server.GlobalHub = server.NewHub()
 	go server.GlobalHub.Run()
@@ -27,7 +40,7 @@ func main() {
 	http.HandleFunc("/api/traffic", srv.HandleTrafficBatch)
 	http.HandleFunc("/api/navigate", srv.HandleNavigation)
 	http.HandleFunc("/ws", srv.HandleWebSocket)
-	
+
 	// הגשת קבצי GUI סטטיים
 	http.Handle("/", http.FileServer(http.Dir("web")))
 
