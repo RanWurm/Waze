@@ -29,6 +29,8 @@ type Config struct {
 		SpeedFactor          float64 `json:"speed_factor"`
 		Alpha                float64 `json:"alpha"`
 	} `json:"physics"`
+
+	MaxCPUs int `json:"max_cpus"`
 }
 
 var (

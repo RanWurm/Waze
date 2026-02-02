@@ -3,6 +3,7 @@ package sim
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"sync"
 	"time"
 	"waze/internal/config"
@@ -18,10 +19,10 @@ type World struct {
 	SimTime       float64
 	ReportsBuffer []types.TrafficReport
 	Client        *Client
+	EdgeDensity   map[int]int
+	Rng           *rand.Rand
 
 	VirtualStartTime time.Time
-
-	EdgeDensity map[int]int
 }
 
 func NewWorld(mapFile, serverUrl string) (*World, error) {
@@ -29,12 +30,17 @@ func NewWorld(mapFile, serverUrl string) (*World, error) {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	source := rand.NewSource(42)
+	rng := rand.New(source)
+
 	return &World{
 		Graph:            g,
 		Cars:             make([]*Car, 0),
 		SimTime:          0,
 		VirtualStartTime: time.Now(),
 		Client:           NewClient(serverUrl),
+		Rng:              rng,
 	}, nil
 }
 

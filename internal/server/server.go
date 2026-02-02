@@ -7,15 +7,24 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 	"waze/internal/config"
 	"waze/internal/graph"
 	"waze/internal/types"
 )
 
+const MinBatchSizeForParallelism = 500
+const MinReportsPerWorker = 500
+
 type Server struct {
 	Graph *graph.Graph
 
 	Cache *RouteCache
+}
+
+type EdgeAggregator struct {
+	SpeedSum float64
+	Count    int
 }
 
 func NewServer(mapFile string) *Server {
@@ -30,6 +39,8 @@ func NewServer(mapFile string) *Server {
 }
 
 func (s *Server) HandleTrafficBatch(w http.ResponseWriter, r *http.Request) {
+	defer config.TimeTrack(time.Now(), "HandleTrafficBatch")
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST request allowed", http.StatusMethodNotAllowed)
 		return
@@ -40,41 +51,60 @@ func (s *Server) HandleTrafficBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid Json", http.StatusBadRequest)
 		return
 	}
-
-	// מקביליות בעדכון
-	numWorkers := 8
+	// safety check
 	reportsCount := len(reports)
-
 	if reportsCount == 0 {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	if reportsCount < numWorkers {
-		numWorkers = 1
+	// check if the batch size justifies parallelism
+	shouldParallel := reportsCount >= MinBatchSizeForParallelism && config.Global.MaxCPUs > 1
+	if shouldParallel {
+
+		neededWorkers := reportsCount / MinReportsPerWorker
+
+		activeWorkers := min(neededWorkers, config.Global.MaxCPUs)
+
+		s.processReportsParallel(reports, activeWorkers)
+	} else {
+
+		s.processReportsSerial(reports)
 	}
+	// // מקביליות בעדכון
+	// numWorkers := 8
+	// reportsCount := len(reports)
 
-	chunkSize := (reportsCount + numWorkers - 1) / numWorkers
+	// if reportsCount == 0 {
+	// 	w.WriteHeader(http.StatusOK)
+	// 	return
+	// }
 
-	var wg sync.WaitGroup
-	wg.Add(numWorkers)
+	// if reportsCount < numWorkers {
+	// 	numWorkers = 1
+	// }
 
-	for i := 0; i < numWorkers; i++ {
-		start := i * chunkSize
-		end := min(start+chunkSize, reportsCount)
+	// chunkSize := (reportsCount + numWorkers - 1) / numWorkers
 
-		go func(startIdx, endIdx int) {
-			defer wg.Done()
-			for j := startIdx; j < endIdx; j++ {
-				report := reports[j]
-				if edge, exists := s.Graph.Edges[report.EdgeID]; exists && report.CarID != -1 {
-					edge.UpdateSpeed(report.Speed)
-				}
-			}
-		}(start, end)
-	}
+	// var wg sync.WaitGroup
+	// wg.Add(numWorkers)
 
-	wg.Wait()
+	// for i := 0; i < numWorkers; i++ {
+	// 	start := i * chunkSize
+	// 	end := min(start+chunkSize, reportsCount)
+
+	// 	go func(startIdx, endIdx int) {
+	// 		defer wg.Done()
+	// 		for j := startIdx; j < endIdx; j++ {
+	// 			report := reports[j]
+	// 			if edge, exists := s.Graph.Edges[report.EdgeID]; exists && report.CarID != -1 {
+	// 				edge.UpdateSpeed(report.Speed)
+	// 			}
+	// 		}
+	// 	}(start, end)
+	// }
+
+	// wg.Wait()
 
 	// שליחת עדכון ל-GUI
 	if GlobalHub != nil {
@@ -83,6 +113,69 @@ func (s *Server) HandleTrafficBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) processReportsSerial(reports []types.TrafficReport) {
+	aggMap := make(map[int]*EdgeAggregator)
+
+	for _, rep := range reports {
+		if _, exists := s.Graph.Edges[rep.EdgeID]; exists && rep.CarID != -1 {
+			if aggMap[rep.EdgeID] == nil {
+				aggMap[rep.EdgeID] = &EdgeAggregator{}
+			}
+			aggMap[rep.EdgeID].SpeedSum += rep.Speed
+			aggMap[rep.EdgeID].Count++
+		}
+	}
+
+	s.applyAggregationToGraph(aggMap)
+}
+
+func (s *Server) processReportsParallel(reports []types.TrafficReport, numWorkers int) {
+	chunckSize := (len(reports) + numWorkers - 1) / numWorkers
+	var wg sync.WaitGroup
+
+	partialResults := make([]map[int]*EdgeAggregator, numWorkers)
+
+	for i := 0; i < numWorkers; i++ {
+		start := i * chunckSize
+		end := min(start+chunckSize, len(reports))
+
+		wg.Add(1)
+		go func(idx int, slice []types.TrafficReport) {
+			defer wg.Done()
+			localMap := make(map[int]*EdgeAggregator)
+
+			for _, rep := range slice {
+				if _, exists := s.Graph.Edges[rep.EdgeID]; exists && rep.CarID != -1 {
+					if _, seen := localMap[rep.EdgeID]; !seen {
+						localMap[rep.EdgeID] = &EdgeAggregator{}
+					}
+					localMap[rep.EdgeID].SpeedSum += rep.Speed
+					localMap[rep.EdgeID].Count++
+				}
+			}
+			partialResults[idx] = localMap
+		}(i, reports[start:end])
+	}
+	wg.Wait()
+
+	for _, partialMap := range partialResults {
+		s.applyAggregationToGraph(partialMap)
+	}
+}
+
+func (s *Server) applyAggregationToGraph(aggMap map[int]*EdgeAggregator) {
+	for edgeID, agg := range aggMap {
+		if edge, exists := s.Graph.Edges[edgeID]; exists {
+			if edge == nil {
+				fmt.Printf("Warning: Edge %d exists in map but is nil!\n", edgeID)
+				continue
+			}
+			avgSpeed := agg.SpeedSum / float64(agg.Count)
+			edge.UpdateSpeed(avgSpeed)
+		}
+	}
 }
 
 // חישוב מיקומי מכוניות על המפה
@@ -134,7 +227,7 @@ func (s *Server) HandleNavigation(w http.ResponseWriter, r *http.Request) {
 
 	// check if the route is in cache
 	if cachedResponse, exists := s.Cache.Get(fromId, toId); exists {
-		fmt.Println("The route is from the cache")
+		fmt.Printf("The route (%d -> %d) is from the cache\n", fromId, toId)
 		// send response
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cachedResponse)
