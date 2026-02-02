@@ -117,7 +117,7 @@ func initStartingTraffic(numCars int, w *sim.World) {
 }
 
 func trySpawnCarAtLoc(w *sim.World, id int, src int) {
-	dst := rand.Intn(1000)
+	dst := w.Rng.Intn(len(w.Graph.NodesArr))
 	if src == dst {
 		dst++
 	}
