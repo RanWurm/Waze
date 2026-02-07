@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"runtime"
+	"time"
 	"waze/internal/config"
 	"waze/internal/server"
 )
@@ -43,6 +45,21 @@ func main() {
 
 	// הגשת קבצי GUI סטטיים
 	http.Handle("/", http.FileServer(http.Dir("web")))
+
+	// Memory watchdog: kill process if heap exceeds 4GB
+	go func() {
+		const maxHeapBytes = 4 * 1024 * 1024 * 1024 // 4 GB
+		for {
+			var mem runtime.MemStats
+			runtime.ReadMemStats(&mem)
+			if mem.HeapAlloc > maxHeapBytes {
+				log.Printf("MEMORY WATCHDOG: heap=%dMB exceeded 4GB limit, shutting down",
+					mem.HeapAlloc/(1024*1024))
+				os.Exit(1)
+			}
+			time.Sleep(2 * time.Second)
+		}
+	}()
 
 	log.Printf("Server running on: %s\n", config.Global.Server.Port)
 	log.Printf("GUI available at: http://localhost%s\n", config.Global.Server.Port)

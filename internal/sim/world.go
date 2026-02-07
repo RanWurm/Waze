@@ -13,6 +13,8 @@ import (
 
 const TIME_TO_REPORT = 2
 
+const densityWorkers = 8
+
 type World struct {
 	Graph         *graph.Graph
 	Cars          []*Car
@@ -24,6 +26,10 @@ type World struct {
 	GlobalCarId   int64
 
 	VirtualStartTime time.Time
+
+	// Reusable maps for density calculation to avoid per-tick allocations
+	densityLocalMaps []map[int]int
+	densityResult    map[int]int
 }
 
 func NewWorld(mapFile, serverUrl string) (*World, error) {
@@ -35,6 +41,11 @@ func NewWorld(mapFile, serverUrl string) (*World, error) {
 	source := rand.NewSource(42)
 	rng := rand.New(source)
 
+	localMaps := make([]map[int]int, densityWorkers)
+	for i := range localMaps {
+		localMaps[i] = make(map[int]int)
+	}
+
 	return &World{
 		Graph:            g,
 		Cars:             make([]*Car, 0),
@@ -42,6 +53,8 @@ func NewWorld(mapFile, serverUrl string) (*World, error) {
 		VirtualStartTime: time.Now(),
 		Client:           NewClient(serverUrl),
 		Rng:              rng,
+		densityLocalMaps: localMaps,
+		densityResult:    make(map[int]int),
 	}, nil
 }
 
@@ -64,7 +77,7 @@ func (world *World) CleanArrivedCars() {
 	activeCars := world.Cars[:0]
 
 	for _, car := range world.Cars {
-		if car.State != Arrived {
+		if car.State != Arrived && car.State != Waiting {
 			activeCars = append(activeCars, car)
 		}
 	}
@@ -194,12 +207,17 @@ func (world *World) collectActiveReports() []types.TrafficReport {
 		}
 
 		if car.State == Driving && car.ActiveRoute != nil {
-			reports = append(reports, types.TrafficReport{
+			report := types.TrafficReport{
 				CarID:     car.Id,
 				EdgeID:    car.ActiveRoute.RouteEdges[car.ActiveRoute.CurrentEdgeIndex],
 				Speed:     car.CurrentSpeed,
 				Timestamp: world.GetCurrentTime(),
-			})
+			}
+			// Include full route for sampled cars (GUI display)
+			if car.Id%10 == 0 {
+				report.RouteEdges = car.ActiveRoute.RouteEdges
+			}
+			reports = append(reports, report)
 		}
 	}
 
@@ -256,25 +274,34 @@ func contains(slice []int, item int) bool {
 
 func (world *World) calculateDensityParallel() map[int]int {
 	carsCount := len(world.Cars)
-	if carsCount == 0 {
-		return make(map[int]int)
+
+	// Clear the result map
+	for k := range world.densityResult {
+		delete(world.densityResult, k)
 	}
 
-	numWorkers := 8
+	if carsCount == 0 {
+		return world.densityResult
+	}
+
+	numWorkers := densityWorkers
 	if carsCount < numWorkers {
 		numWorkers = 1
 	}
 
 	chunkSize := (carsCount + numWorkers - 1) / numWorkers
 
-	// כל עובד יוצר מפה מקומית
-	localMaps := make([]map[int]int, numWorkers)
+	// Clear worker maps
+	for i := 0; i < numWorkers; i++ {
+		for k := range world.densityLocalMaps[i] {
+			delete(world.densityLocalMaps[i], k)
+		}
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(numWorkers)
 
 	for i := 0; i < numWorkers; i++ {
-		localMaps[i] = make(map[int]int)
 		start := i * chunkSize
 		end := min(start+chunkSize, carsCount)
 
@@ -284,7 +311,7 @@ func (world *World) calculateDensityParallel() map[int]int {
 				car := world.Cars[j]
 				if car.State == Driving && car.ActiveRoute != nil {
 					edgeId := car.ActiveRoute.RouteEdges[car.ActiveRoute.CurrentEdgeIndex]
-					localMaps[idx][edgeId]++
+					world.densityLocalMaps[idx][edgeId]++
 				}
 			}
 		}(i, start, end)
@@ -293,12 +320,11 @@ func (world *World) calculateDensityParallel() map[int]int {
 	wg.Wait()
 
 	// מיזוג המפות
-	result := make(map[int]int)
-	for _, m := range localMaps {
-		for edgeId, count := range m {
-			result[edgeId] += count
+	for i := 0; i < numWorkers; i++ {
+		for edgeId, count := range world.densityLocalMaps[i] {
+			world.densityResult[edgeId] += count
 		}
 	}
 
-	return result
+	return world.densityResult
 }

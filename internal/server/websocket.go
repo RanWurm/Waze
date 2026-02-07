@@ -86,12 +86,13 @@ type GUIUpdate struct {
 }
 
 type CarPosition struct {
-	CarID    int     `json:"car_id"`
-	EdgeID   int     `json:"edge_id"`
-	Progress float64 `json:"progress"` // 0-1 על הקשת
-	Speed    float64 `json:"speed"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
+	CarID    int         `json:"car_id"`
+	EdgeID   int         `json:"edge_id"`
+	Progress float64     `json:"progress"`
+	Speed    float64     `json:"speed"`
+	X        float64     `json:"x"`
+	Y        float64     `json:"y"`
+	Route    [][]float64 `json:"route,omitempty"` // [[lng,lat], ...] for GUI
 }
 
 // שליחת עדכון לכל הלקוחות
@@ -123,11 +124,15 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	GlobalHub.register <- client
 
-	// שליחת הגרף הראשוני ללקוח (דרך ה-mutex)
-	graphData := s.GetGraphData()
+	// שליחת הודעת אתחול ללא הגרף (למנוע lag)
+	// הלקוח יקבל רק את המסלולים שנבקש
 	initMsg := GUIUpdate{
 		Type: "init",
-		Data: graphData,
+		Data: map[string]interface{}{
+			"nodes": []NodeData{}, // Empty - no need to send entire graph
+			"edges": []EdgeData{}, // Empty - no need to send entire graph
+			"message": "Connected - request a route to begin",
+		},
 	}
 	jsonData, _ := json.Marshal(initMsg)
 	client.WriteMessage(jsonData)

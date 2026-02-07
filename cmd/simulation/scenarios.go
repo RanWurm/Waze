@@ -67,6 +67,7 @@ func RunSimulationLoop(w *sim.World, events []*ScheduledEvent, numCars int) {
 	dt := config.Global.Simulation.DeltaTime
 
 	for {
+
 		// check if any event is happening
 		for _, event := range events {
 			if !event.Executed && simTime >= event.Time {
@@ -79,6 +80,29 @@ func RunSimulationLoop(w *sim.World, events []*ScheduledEvent, numCars int) {
 		w.Tick(dt)
 		w.CleanArrivedCars()
 		simTime += dt
+
+		// Exit when spawning is done and all cars have finished
+		if simTime > config.Global.Simulation.EndSpawn && len(w.Cars) == 0 {
+			fmt.Println("Simulation Finished. All cars arrived.")
+			break
+		}
+
+		// Periodic status log
+		if int(simTime)%10 == 0 && simTime == float64(int(simTime)) {
+			driving, waiting, idle := 0, 0, 0
+			for _, car := range w.Cars {
+				switch car.State {
+				case sim.Driving:
+					driving++
+				case sim.Waiting:
+					waiting++
+				case sim.Idle:
+					idle++
+				}
+			}
+			fmt.Printf("[SimTime %.1f] Cars: %d total, %d driving, %d waiting, %d idle\n",
+				simTime, len(w.Cars), driving, waiting, idle)
+		}
 
 		// check if it is time to generate a new car
 		if w.SimTime-lastSpawnTime >= config.Global.Simulation.SpawnRate && w.SimTime < config.Global.Simulation.EndSpawn {
@@ -100,7 +124,7 @@ func genarateRandomCar(w *sim.World, carId int) {
 		// check if the nodes are valid
 		route, err = w.Client.RequestRoute(src, dst)
 		if err != nil {
-			fmt.Printf("Route does not exists. Error: %s\n", err)
+			fmt.Printf("Route does not exist from %d to %d . Error: %s\n", src, dst, err)
 			continue
 		}
 		break
@@ -192,7 +216,7 @@ func spawnSpecificCar(w *sim.World, id, src, dst int) {
 	for {
 		route, err = w.Client.RequestRoute(src, dst)
 		if err != nil {
-			fmt.Printf("Failed to spawn scenario car %d: %v\n", id, err)
+			fmt.Printf("Failed to spawn scenario car %d from %d to %d: %v\n", id, src, dst, err)
 			continue
 		}
 		break

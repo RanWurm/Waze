@@ -41,5 +41,34 @@ func LoadGraph(fileName string) (*Graph, error) {
 			fmt.Printf("Warning: Skipping edge %d: %v\n", e.Id, err)
 		}
 	}
+
+	// Build dense node index for array-based algorithms
+	g.NodeIndex = make(map[int]int, len(g.Nodes))
+	g.IndexNode = make([]int, len(g.Nodes))
+	idx := 0
+	for _, nodeID := range g.NodesArr {
+		g.NodeIndex[nodeID] = idx
+		g.IndexNode[idx] = nodeID
+		idx++
+	}
+
+	// Auto-compute default delta: average edge weight (time in hours)
+	totalWeight := 0.0
+	edgeCount := 0
+	for _, e := range g.Edges {
+		speed := e.SpeedLimit
+		if speed <= 0 {
+			speed = 1.0
+		}
+		totalWeight += e.Length / speed
+		edgeCount++
+	}
+	if edgeCount > 0 {
+		g.DefaultDelta = totalWeight / float64(edgeCount)
+	} else {
+		g.DefaultDelta = 0.003
+	}
+	fmt.Printf("Graph loaded: %d nodes, %d edges, delta=%.6f hours\n", len(g.Nodes), len(g.Edges), g.DefaultDelta)
+
 	return g, nil
 }

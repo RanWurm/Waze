@@ -18,15 +18,17 @@ type CachedRouted struct {
 }
 
 type RouteCache struct {
-	store map[RouteKey]CachedRouted // check if the route is already in the cache
-	mu    sync.RWMutex
-	ttl   time.Duration
+	store       map[RouteKey]CachedRouted // check if the route is already in the cache
+	mu          sync.RWMutex
+	ttl         time.Duration
+	lastCleanup time.Time
 }
 
 func NewRouteCache(ttlSeconds int) *RouteCache {
 	return &RouteCache{
-		store: make(map[RouteKey]CachedRouted),
-		ttl:   time.Duration(ttlSeconds) * time.Second,
+		store:       make(map[RouteKey]CachedRouted),
+		ttl:         time.Duration(ttlSeconds) * time.Second,
+		lastCleanup: time.Now(),
 	}
 }
 
@@ -62,5 +64,20 @@ func (cache *RouteCache) Set(from, to int, response types.NavigationResponse) {
 	cache.store[key] = CachedRouted{
 		Response:  response,
 		CreatedAt: time.Now(),
+	}
+
+	// Periodic cleanup to prevent unbounded growth
+	if time.Since(cache.lastCleanup) > 30*time.Second {
+		cache.cleanupExpired()
+		cache.lastCleanup = time.Now()
+	}
+}
+
+// cleanupExpired removes expired cache entries (must be called with lock held)
+func (cache *RouteCache) cleanupExpired() {
+	for key, entry := range cache.store {
+		if time.Since(entry.CreatedAt) > cache.ttl {
+			delete(cache.store, key)
+		}
 	}
 }

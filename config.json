@@ -1,15 +1,15 @@
 {
     "server": {
         "server_port":":8080",
-        "map_file":"data/filtered_shoham.json",
+        "map_file":"data/gush_dan.json",
         "cache_ttl":5
     },
     "simulation": {
         "server_url":"http://localhost",
         "num_cars":1000,
-        "spawn_rate":2.0,
+        "spawn_rate":5.0,
         "report_interval":5,
-        "end_spawn":200.0,
+        "end_spawn":60.0,
         "delta_time":1.0
     },
     "physics": {

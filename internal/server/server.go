@@ -177,12 +177,16 @@ func (s *Server) applyAggregationToGraph(aggMap map[int]*EdgeAggregator) {
 	}
 }
 
-// חישוב מיקומי מכוניות על המפה
+// calculateCarPositions samples ~10% of cars for GUI display
 func (s *Server) calculateCarPositions(reports []types.TrafficReport) []CarPosition {
-	positions := make([]CarPosition, 0, len(reports))
+	positions := make([]CarPosition, 0, len(reports)/10+1)
 
 	for _, report := range reports {
 		if report.CarID == -1 {
+			continue
+		}
+		// Show ~10% of cars consistently by ID
+		if len(reports) >= 100 && report.CarID%10 != 0 {
 			continue
 		}
 
@@ -194,19 +198,36 @@ func (s *Server) calculateCarPositions(reports []types.TrafficReport) []CarPosit
 		fromNode := s.Graph.Nodes[edge.From]
 		toNode := s.Graph.Nodes[edge.To]
 
-		// נניח progress של 0.5 כברירת מחדל (אפשר לשפר בהמשך)
 		progress := 0.5
 		x := fromNode.X + (toNode.X-fromNode.X)*progress
 		y := fromNode.Y + (toNode.Y-fromNode.Y)*progress
 
-		positions = append(positions, CarPosition{
+		pos := CarPosition{
 			CarID:    report.CarID,
 			EdgeID:   report.EdgeID,
 			Progress: progress,
 			Speed:    report.Speed,
 			X:        x,
 			Y:        y,
-		})
+		}
+
+		// Convert route edges to coordinates for GUI
+		if len(report.RouteEdges) > 0 {
+			route := make([][]float64, 0, len(report.RouteEdges)+1)
+			for _, edgeID := range report.RouteEdges {
+				if e, ok := s.Graph.Edges[edgeID]; ok {
+					fn := s.Graph.Nodes[e.From]
+					if len(route) == 0 {
+						route = append(route, []float64{fn.X, fn.Y})
+					}
+					tn := s.Graph.Nodes[e.To]
+					route = append(route, []float64{tn.X, tn.Y})
+				}
+			}
+			pos.Route = route
+		}
+
+		positions = append(positions, pos)
 	}
 
 	return positions

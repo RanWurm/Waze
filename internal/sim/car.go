@@ -154,6 +154,7 @@ func (car *Car) switchToNextEdge(g *graph.Graph) {
 
 		// check if we reached end of the route
 		if car.ActiveRoute.CurrentEdgeIndex >= len(car.ActiveRoute.RouteEdges) {
+			fmt.Printf("Car %d arrived (route had %d edges)\n", car.Id, len(car.ActiveRoute.RouteEdges))
 			car.State = Arrived
 			car.CurrentSpeed = 0
 			car.ActiveRoute = nil

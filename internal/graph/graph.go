@@ -12,6 +12,11 @@ type Graph struct {
 	NodesArr []int
 	AdjList        map[int][]*Edge
 	ReverseAdjList map[int][]*Edge
+
+	// Dense index mapping for array-based algorithms (Delta-Stepping)
+	NodeIndex map[int]int // node ID → dense index 0..N-1
+	IndexNode []int       // dense index → node ID
+	DefaultDelta float64  // auto-computed delta for Delta-Stepping
 }
 
 func NewGraph() *Graph {

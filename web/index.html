@@ -297,11 +297,14 @@
             <h3>📍 מסלול</h3>
             <div class="input-group">
                 <label>נקודת התחלה</label>
-                <input type="number" id="startNode" placeholder="לחץ על המפה">
+                <input type="number" id="startNode" placeholder="הכנס מספר (1-113157)">
             </div>
             <div class="input-group">
                 <label>נקודת יעד</label>
-                <input type="number" id="endNode" placeholder="לחץ על המפה">
+                <input type="number" id="endNode" placeholder="הכנס מספר (1-113157)">
+            </div>
+            <div style="font-size: 0.75em; color: #888; margin-top: -8px; margin-bottom: 8px;">
+                נסה: 1000 → 50000 (תל אביב למרכז)
             </div>
             <button class="btn btn-primary" onclick="findRoute()">🔍 חשב מסלול</button>
             <button class="btn btn-success" id="btnStart" onclick="startDriving()" disabled>▶️ התחל נסיעה</button>
@@ -395,7 +398,7 @@ const state = {
     carSpeed: 0,
     totalDistance: 0,
     traveledDistance: 0,
-    mapCenter: { lng: 34.945, lat: 32.0 }
+    mapCenter: { lng: 34.82, lat: 32.07 }
 };
 
 // ============== MapLibre Setup ==============
@@ -421,7 +424,7 @@ function initMap() {
             }]
         },
         center: [state.mapCenter.lng, state.mapCenter.lat],
-        zoom: 15
+        zoom: 12
     });
     
     map.on('load', () => {
@@ -468,7 +471,7 @@ function initMap() {
             type: 'line',
             source: 'route',
             paint: {
-                'line-color': '#ffd43b',
+                'line-color': '#a855f7',
                 'line-width': 6,
                 'line-opacity': 0.9
             }
@@ -497,14 +500,61 @@ function initMap() {
             }
         });
         
+        // Create emoji image for user car
+        const emojiCanvas = document.createElement('canvas');
+        emojiCanvas.width = 64;
+        emojiCanvas.height = 64;
+        const emojiCtx = emojiCanvas.getContext('2d');
+        emojiCtx.font = '48px serif';
+        emojiCtx.textAlign = 'center';
+        emojiCtx.textBaseline = 'middle';
+        emojiCtx.fillText('\ud83d\ude97', 32, 32);
+        map.addImage('car-emoji', { width: 64, height: 64, data: emojiCtx.getImageData(0, 0, 64, 64).data });
+
+        // User car emoji layer
         map.addLayer({
             id: 'car-layer',
-            type: 'circle',
+            type: 'symbol',
             source: 'car',
+            layout: {
+                'icon-image': 'car-emoji',
+                'icon-size': 0.7,
+                'icon-allow-overlap': true,
+                'icon-ignore-placement': true
+            }
+        });
+
+        // Simulation car routes
+        map.addSource('simulation-routes', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+
+        map.addLayer({
+            id: 'simulation-routes-layer',
+            type: 'line',
+            source: 'simulation-routes',
             paint: {
-                'circle-radius': 12,
-                'circle-color': '#00d4ff',
-                'circle-stroke-width': 3,
+                'line-color': ['get', 'color'],
+                'line-width': 4,
+                'line-opacity': 0.7
+            }
+        });
+
+        // Simulation cars dots
+        map.addSource('simulation-cars', {
+            type: 'geojson',
+            data: { type: 'FeatureCollection', features: [] }
+        });
+
+        map.addLayer({
+            id: 'simulation-cars-layer',
+            type: 'circle',
+            source: 'simulation-cars',
+            paint: {
+                'circle-radius': 6,
+                'circle-color': ['get', 'color'],
+                'circle-stroke-width': 1,
                 'circle-stroke-color': '#fff'
             }
         });
@@ -531,9 +581,15 @@ function initMap() {
 }
 
 function findNearestNodeToPoint(lng, lat) {
+    // For large maps, nodes are not loaded - user must enter node IDs manually
+    if (state.nodes.size === 0) {
+        alert('For large maps, please enter node IDs manually (1-113157)\nExample: Start=1000, End=50000');
+        return null;
+    }
+
     let nearest = null;
     let minDist = Infinity;
-    
+
     for (const node of state.nodes.values()) {
         const dist = Math.hypot(node.x - lng, node.y - lat);
         if (dist < minDist && dist < 0.002) {
@@ -541,37 +597,34 @@ function findNearestNodeToPoint(lng, lat) {
             nearest = node;
         }
     }
-    
+
     return nearest;
 }
 
 function updateMapData() {
     if (!map || !map.getSource('edges')) return;
-    
-    // Update edges
-    const edgeFeatures = [];
-    for (const edge of state.edges.values()) {
-        edgeFeatures.push({
-            type: 'Feature',
-            geometry: {
-                type: 'LineString',
-                coordinates: [[edge.from_x, edge.from_y], [edge.to_x, edge.to_y]]
-            }
-        });
-    }
-    map.getSource('edges').setData({ type: 'FeatureCollection', features: edgeFeatures });
-    
-    // Update nodes
+
+    // Don't render all edges - too slow for large maps!
+    // Only render via OpenStreetMap tiles
+    map.getSource('edges').setData({ type: 'FeatureCollection', features: [] });
+
+    // Render start/end nodes from route edge data
     const nodeFeatures = [];
-    for (const node of state.nodes.values()) {
-        let color = '#4a5568';
-        if (node.id === state.startNodeId) color = '#40c057';
-        else if (node.id === state.endNodeId) color = '#e03131';
-        
+    if (state.routeEdges.length > 0) {
+        // Start node (green)
+        const firstEdge = state.routeEdges[0];
         nodeFeatures.push({
             type: 'Feature',
-            geometry: { type: 'Point', coordinates: [node.x, node.y] },
-            properties: { color, id: node.id }
+            geometry: { type: 'Point', coordinates: [firstEdge.from_x, firstEdge.from_y] },
+            properties: { color: '#40c057', id: state.startNodeId }
+        });
+
+        // End node (red)
+        const lastEdge = state.routeEdges[state.routeEdges.length - 1];
+        nodeFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lastEdge.to_x, lastEdge.to_y] },
+            properties: { color: '#e03131', id: state.endNodeId }
         });
     }
     map.getSource('nodes').setData({ type: 'FeatureCollection', features: nodeFeatures });
@@ -594,6 +647,27 @@ function updateMapData() {
         map.getSource('route').setData({ type: 'FeatureCollection', features: [] });
     }
     
+    // Update traveled path (green line showing where car has driven)
+    if (state.isDriving && state.carEdgeIndex > 0) {
+        const traveledCoords = [];
+        for (let i = 0; i < state.carEdgeIndex; i++) {
+            const edge = state.routeEdges[i];
+            if (traveledCoords.length === 0) traveledCoords.push([edge.from_x, edge.from_y]);
+            traveledCoords.push([edge.to_x, edge.to_y]);
+        }
+        if (traveledCoords.length > 1) {
+            map.getSource('traveled').setData({
+                type: 'FeatureCollection',
+                features: [{
+                    type: 'Feature',
+                    geometry: { type: 'LineString', coordinates: traveledCoords }
+                }]
+            });
+        }
+    } else {
+        map.getSource('traveled').setData({ type: 'FeatureCollection', features: [] });
+    }
+
     // Update car position
     if (state.isDriving) {
         map.getSource('car').setData({
@@ -603,200 +677,12 @@ function updateMapData() {
                 geometry: { type: 'Point', coordinates: [state.carPosition.lng, state.carPosition.lat] }
             }]
         });
+    } else {
+        map.getSource('car').setData({ type: 'FeatureCollection', features: [] });
     }
 }
 
-// ============== Three.js Setup ==============
-let scene, camera, renderer, roadGroup;
-
-function initThreeJS() {
-    const container = document.getElementById('three-container');
-    
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
-    scene.fog = new THREE.Fog(0x1a1a2e, 50, 500);
-    
-    camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-    camera.position.set(0, 3, 0);
-    camera.lookAt(0, 2, -50);
-    
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    renderer.shadowMap.enabled = true;
-    container.appendChild(renderer.domElement);
-    
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
-    scene.add(ambientLight);
-    
-    const moonLight = new THREE.DirectionalLight(0x8888ff, 0.3);
-    moonLight.position.set(50, 100, 50);
-    scene.add(moonLight);
-    
-    // Ground
-    const groundGeometry = new THREE.PlaneGeometry(2000, 2000);
-    const groundMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0x1a3d1a,
-        roughness: 0.9
-    });
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -0.1;
-    scene.add(ground);
-    
-    // Starfield
-    const starGeometry = new THREE.BufferGeometry();
-    const starCount = 2000;
-    const starPositions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount * 3; i += 3) {
-        starPositions[i] = (Math.random() - 0.5) * 1000;
-        starPositions[i + 1] = Math.random() * 200 + 50;
-        starPositions[i + 2] = (Math.random() - 0.5) * 1000;
-    }
-    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 1 });
-    const stars = new THREE.Points(starGeometry, starMaterial);
-    scene.add(stars);
-    
-    // Road group
-    roadGroup = new THREE.Group();
-    scene.add(roadGroup);
-    
-    window.addEventListener('resize', onWindowResize);
-}
-
-function onWindowResize() {
-    const container = document.getElementById('three-container');
-    camera.aspect = container.clientWidth / container.clientHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(container.clientWidth, container.clientHeight);
-}
-
-function createRoadSegment(fromX, fromZ, toX, toZ, isMyRoute, isTraveled) {
-    const dx = toX - fromX;
-    const dz = toZ - fromZ;
-    const length = Math.sqrt(dx * dx + dz * dz);
-    const angle = Math.atan2(dx, dz);
-    
-    const roadWidth = isMyRoute ? 8 : 5;
-    const roadGeometry = new THREE.PlaneGeometry(roadWidth, length);
-    
-    let color = 0x333333;
-    if (isTraveled) color = 0x40c057;
-    else if (isMyRoute) color = 0xffd43b;
-    
-    const roadMaterial = new THREE.MeshStandardMaterial({ 
-        color,
-        roughness: 0.8,
-        side: THREE.DoubleSide
-    });
-    
-    const road = new THREE.Mesh(roadGeometry, roadMaterial);
-    road.rotation.x = -Math.PI / 2;
-    road.rotation.z = angle;
-    road.position.set((fromX + toX) / 2, 0.01, (fromZ + toZ) / 2);
-    
-    return road;
-}
-
-function updateThreeScene() {
-    if (!roadGroup) return;
-    
-    // Clear old roads
-    while (roadGroup.children.length > 0) {
-        roadGroup.remove(roadGroup.children[0]);
-    }
-    
-    const carX = state.carPosition.lng;
-    const carY = state.carPosition.lat;
-    const viewAngle = state.carAngle;
-    
-    // Scale factor: convert geo coords to 3D world coords
-    const scale = 50000;
-    
-    // Draw nearby edges
-    for (const edge of state.edges.values()) {
-        const midX = (edge.from_x + edge.to_x) / 2;
-        const midY = (edge.from_y + edge.to_y) / 2;
-        const dist = Math.hypot(midX - carX, midY - carY);
-        
-        if (dist > 0.005) continue; // Skip far edges
-        
-        // Convert to local coords relative to car
-        const localFromX = (edge.from_x - carX) * scale;
-        const localFromZ = -(edge.from_y - carY) * scale;
-        const localToX = (edge.to_x - carX) * scale;
-        const localToZ = -(edge.to_y - carY) * scale;
-        
-        // Rotate based on car direction
-        const cos = Math.cos(-viewAngle);
-        const sin = Math.sin(-viewAngle);
-        
-        const rotFromX = localFromX * cos - localFromZ * sin;
-        const rotFromZ = localFromX * sin + localFromZ * cos;
-        const rotToX = localToX * cos - localToZ * sin;
-        const rotToZ = localToX * sin + localToZ * cos;
-        
-        const isMyRoute = state.route.includes(edge.id);
-        const edgeIndex = state.routeEdges.findIndex(e => e.id === edge.id);
-        const isTraveled = edgeIndex !== -1 && edgeIndex < state.carEdgeIndex;
-        
-        const road = createRoadSegment(rotFromX, rotFromZ, rotToX, rotToZ, isMyRoute, isTraveled);
-        roadGroup.add(road);
-    }
-    
-    // Add road markings for current route
-    if (state.routeEdges.length > 0) {
-        // Center line dashes
-        const dashMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
-        
-        for (let i = state.carEdgeIndex; i < Math.min(state.carEdgeIndex + 5, state.routeEdges.length); i++) {
-            const edge = state.routeEdges[i];
-            const localFromX = (edge.from_x - carX) * scale;
-            const localFromZ = -(edge.from_y - carY) * scale;
-            const localToX = (edge.to_x - carX) * scale;
-            const localToZ = -(edge.to_y - carY) * scale;
-            
-            const cos = Math.cos(-viewAngle);
-            const sin = Math.sin(-viewAngle);
-            
-            const rotFromX = localFromX * cos - localFromZ * sin;
-            const rotFromZ = localFromX * sin + localFromZ * cos;
-            const rotToX = localToX * cos - localToZ * sin;
-            const rotToZ = localToX * sin + localToZ * cos;
-            
-            // Only draw what's in front
-            if (rotFromZ > 5 || rotToZ > 5) continue;
-            
-            const dx = rotToX - rotFromX;
-            const dz = rotToZ - rotFromZ;
-            const len = Math.sqrt(dx * dx + dz * dz);
-            const numDashes = Math.floor(len / 4);
-            
-            for (let j = 0; j < numDashes; j++) {
-                const t = (j + 0.5) / numDashes;
-                const x = rotFromX + dx * t;
-                const z = rotFromZ + dz * t;
-                
-                if (z > 0) continue; // Behind camera
-                
-                const dashGeom = new THREE.BoxGeometry(0.3, 0.05, 2);
-                const dash = new THREE.Mesh(dashGeom, dashMaterial);
-                dash.position.set(x, 0.02, z);
-                dash.rotation.y = Math.atan2(dx, dz);
-                roadGroup.add(dash);
-            }
-        }
-    }
-}
-
-function animateThree() {
-    if (state.currentView !== 'drive') return;
-    
-    updateThreeScene();
-    renderer.render(scene, camera);
-    requestAnimationFrame(animateThree);
-}
+// Three.js 3D driving view is now in drive.js (DriveView module)
 
 // ============== Mini Map ==============
 const miniMapCanvas = document.getElementById('mini-map-canvas');
@@ -804,49 +690,39 @@ const miniCtx = miniMapCanvas.getContext('2d');
 
 function renderMiniMap() {
     if (!miniMapCanvas) return;
-    
+
     miniMapCanvas.width = 200;
     miniMapCanvas.height = 200;
-    
+
     miniCtx.fillStyle = '#0a0a1a';
     miniCtx.fillRect(0, 0, 200, 200);
-    
-    if (state.nodes.size === 0) return;
-    
-    // Calculate bounds
+
+    if (state.routeEdges.length === 0) return;
+
+    // Calculate bounds from route only (not all nodes - too slow!)
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const n of state.nodes.values()) {
-        minX = Math.min(minX, n.x);
-        maxX = Math.max(maxX, n.x);
-        minY = Math.min(minY, n.y);
-        maxY = Math.max(maxY, n.y);
+    for (const e of state.routeEdges) {
+        minX = Math.min(minX, e.from_x, e.to_x);
+        maxX = Math.max(maxX, e.from_x, e.to_x);
+        minY = Math.min(minY, e.from_y, e.to_y);
+        maxY = Math.max(maxY, e.from_y, e.to_y);
     }
-    
+
     const pad = 15;
     const scale = Math.min((200 - 2*pad) / (maxX - minX), (200 - 2*pad) / (maxY - minY));
     const offsetX = pad + ((200 - 2*pad) - (maxX - minX) * scale) / 2;
     const offsetY = pad + ((200 - 2*pad) - (maxY - minY) * scale) / 2;
-    
+
     const toScreen = (x, y) => ({
         x: (x - minX) * scale + offsetX,
         y: (maxY - y) * scale + offsetY
     });
-    
-    // Draw edges
-    miniCtx.strokeStyle = '#4a5568';
-    miniCtx.lineWidth = 1;
-    for (const e of state.edges.values()) {
-        const from = toScreen(e.from_x, e.from_y);
-        const to = toScreen(e.to_x, e.to_y);
-        miniCtx.beginPath();
-        miniCtx.moveTo(from.x, from.y);
-        miniCtx.lineTo(to.x, to.y);
-        miniCtx.stroke();
-    }
+
+    // Skip drawing all edges - only draw route (see below)
     
     // Draw route
     if (state.routeEdges.length > 0) {
-        miniCtx.strokeStyle = '#ffd43b';
+        miniCtx.strokeStyle = '#a855f7';
         miniCtx.lineWidth = 3;
         miniCtx.beginPath();
         let first = true;
@@ -891,6 +767,8 @@ function connect() {
         const msg = JSON.parse(e.data);
         if (msg.type === 'init') {
             initGraphData(msg.data);
+        } else if (msg.type === 'cars') {
+            updateSimulationCars(msg.data);
         }
     };
 }
@@ -925,6 +803,73 @@ function initGraphData(data) {
     updateMapData();
 }
 
+// ============== Simulation Cars ==============
+const simCars = new Map();    // car_id -> {x, y, speed, color, route, lastSeen}
+const simColors = new Map();  // car_id -> color (persistent)
+let simRenderTimer = null;
+
+function getCarColor(carId) {
+    if (!simColors.has(carId)) {
+        const hue = (carId * 137) % 360;
+        simColors.set(carId, `hsl(${hue}, 80%, 55%)`);
+    }
+    return simColors.get(carId);
+}
+
+function updateSimulationCars(cars) {
+    const now = Date.now();
+    for (const car of cars) {
+        const color = getCarColor(car.car_id);
+        const entry = { x: car.x, y: car.y, speed: car.speed, color, lastSeen: now };
+        if (car.route && car.route.length > 1) {
+            entry.route = car.route;
+        } else if (simCars.has(car.car_id)) {
+            entry.route = simCars.get(car.car_id).route; // keep previous route
+        }
+        simCars.set(car.car_id, entry);
+    }
+    // Remove cars not seen in 15 seconds
+    for (const [id, data] of simCars) {
+        if (now - data.lastSeen > 15000) simCars.delete(id);
+    }
+    // Debounce render: wait 500ms after last message before rendering
+    if (simRenderTimer) clearTimeout(simRenderTimer);
+    simRenderTimer = setTimeout(renderSimCars, 500);
+}
+
+function renderSimCars() {
+    if (!map || !map.getSource('simulation-cars')) return;
+
+    // Car dots
+    const dotFeatures = [];
+    for (const [id, car] of simCars) {
+        dotFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [car.x, car.y] },
+            properties: { car_id: id, speed: car.speed, color: car.color }
+        });
+    }
+    map.getSource('simulation-cars').setData({
+        type: 'FeatureCollection',
+        features: dotFeatures
+    });
+
+    // Route lines
+    const routeFeatures = [];
+    for (const [id, car] of simCars) {
+        if (!car.route || car.route.length < 2) continue;
+        routeFeatures.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: car.route },
+            properties: { color: car.color }
+        });
+    }
+    map.getSource('simulation-routes').setData({
+        type: 'FeatureCollection',
+        features: routeFeatures
+    });
+}
+
 // ============== Route & Driving ==============
 async function findRoute() {
     const startId = parseInt(document.getElementById('startNode').value);
@@ -944,15 +889,21 @@ async function findRoute() {
         const data = await res.json();
         
         state.route = data.route;
-        state.routeEdges = data.route.map(id => state.edges.get(id)).filter(e => e);
+        state.routeEdges = data.route_edges; // Use full edge data from API
         state.totalDistance = data.distance;
+
+        // Store route edges in state.edges for backward compatibility
+        for (const edge of data.route_edges) {
+            state.edges.set(edge.id, edge);
+        }
         
         document.getElementById('distance').textContent = (data.distance * 1000).toFixed(0) + ' מ\'';
         document.getElementById('eta').textContent = data.eta.toFixed(1) + ' דק\'';
         document.getElementById('btnStart').disabled = false;
         
         updateMapData();
-        
+        DriveView.buildRoute(state.routeEdges);
+
         // Fit map to route
         if (state.routeEdges.length > 0 && map) {
             const coords = state.routeEdges.flatMap(e => [[e.from_x, e.from_y], [e.to_x, e.to_y]]);
@@ -984,10 +935,16 @@ function startDriving() {
     document.getElementById('instructions').style.display = 'none';
     document.getElementById('status').className = 'driving';
     document.getElementById('status').textContent = '🚗 בנסיעה...';
-    
-    // Switch to drive view
-    if (state.currentView === 'map') toggleView();
-    
+
+    // Zoom in to car position
+    if (map) {
+        map.flyTo({
+            center: [state.carPosition.lng, state.carPosition.lat],
+            zoom: 16,
+            duration: 1500
+        });
+    }
+
     lastTime = 0;
     requestAnimationFrame(driveTick);
 }
@@ -1045,12 +1002,13 @@ function driveTick(ts) {
     // Turn indicator
     updateTurnIndicator();
     
-    // Update map
+    // Update views
     if (state.currentView === 'map') {
         updateMapData();
-        map.setCenter([state.carPosition.lng, state.carPosition.lat]);
+    } else if (state.currentView === 'drive') {
+        DriveView.update(state);
     }
-    
+
     renderMiniMap();
     requestAnimationFrame(driveTick);
 }
@@ -1141,12 +1099,13 @@ function toggleView() {
         mapView.style.display = 'none';
         driveView.style.display = 'block';
         btn.textContent = '🗺️ תצוגת מפה';
-        animateThree();
+        DriveView.startAnimation();
     } else {
         state.currentView = 'map';
         mapView.style.display = 'block';
         driveView.style.display = 'none';
         btn.textContent = '🚗 תצוגת נהיגה';
+        DriveView.stopAnimation();
         updateMapData();
     }
 }
@@ -1154,9 +1113,10 @@ function toggleView() {
 // ============== Init ==============
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
-    initThreeJS();
+    DriveView.init('three-container');
     connect();
 });
 </script>
+<script src="drive.js"></script>
 </body>
 </html>

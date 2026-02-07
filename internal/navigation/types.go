@@ -3,9 +3,10 @@ package navigation
 // import "time"
 
 type PathResult struct {
-	Route    []int
-	Distance float64 // in KM
-	ETA      float64
+	Route      []int   // Edge IDs (primary format)
+	RouteNodes []int   // Node IDs (alternative format for entry-point routing)
+	Distance   float64 // in KM
+	ETA        float64 // in minutes
 }
 
 // Route    []int   `json:"route"`
