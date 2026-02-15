@@ -13,6 +13,9 @@ type City struct {
 	Radius      float64        // km
 	EntryPoints []int          // node IDs
 	Nodes       map[int]bool   // all node IDs in this city
+
+	ForwardVirtualNodeID  int // edges FROM each entry TO this node (weight 0)
+	ReversedVirtualNodeID int // edges FROM this node TO each entry (weight 0)
 }
 
 // EntryPointManager handles city entry points

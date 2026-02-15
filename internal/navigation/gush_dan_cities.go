@@ -29,16 +29,44 @@ func InitializeGushDanCities(router *EntryPointRouter) {
 		{"Rishon LeZion", 34.7913, 31.9730, 4.0, 4},
 	}
 
+	virtualIDCounter := -1
+
 	for _, city := range cities {
 		log.Printf("Identifying entry points for %s...", city.name)
 		epm.IdentifyEntryPoints(g, city.name, city.centerX, city.centerY, city.radius, city.entries)
 
 		entryPoints, exists := epm.GetEntryPoints(city.name)
-		if exists {
-			log.Printf("  Found %d entry points for %s: %v", len(entryPoints), city.name, entryPoints)
-		} else {
+		if !exists || len(entryPoints) == 0 {
 			log.Printf("  Warning: No entry points found for %s", city.name)
+			continue
 		}
+		log.Printf("  Found %d entry points for %s: %v", len(entryPoints), city.name, entryPoints)
+
+		cityObj := epm.Cities[city.name]
+
+		// Create forward virtual node (edges FROM each entry TO this node)
+		fwdID := virtualIDCounter
+		virtualIDCounter--
+		g.AddVirtualNode(fwdID, city.name+"_entries_forward", city.centerX, city.centerY)
+		cityObj.ForwardVirtualNodeID = fwdID
+		for _, epID := range entryPoints {
+			edgeID := virtualIDCounter
+			virtualIDCounter--
+			g.AddVirtualEdge(edgeID, epID, fwdID)
+		}
+
+		// Create reversed virtual node (edges FROM this node TO each entry)
+		revID := virtualIDCounter
+		virtualIDCounter--
+		g.AddVirtualNode(revID, city.name+"_entries_reversed", city.centerX, city.centerY)
+		cityObj.ReversedVirtualNodeID = revID
+		for _, epID := range entryPoints {
+			edgeID := virtualIDCounter
+			virtualIDCounter--
+			g.AddVirtualEdge(edgeID, revID, epID)
+		}
+
+		log.Printf("  Created virtual nodes for %s: forward=%d, reversed=%d", city.name, fwdID, revID)
 	}
 
 	// Log statistics

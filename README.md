@@ -6,8 +6,8 @@ A high-performance navigation system built with Go, demonstrating advanced paral
 
 This project implements a Waze-like navigation system focusing on:
 - **Parallel Delta-Stepping algorithm** for shortest path computation
-- **Entry-point based routing** for efficient inter-city navigation
-- **Shared backward search computation** between users to minimize redundant work
+- **Entry-point routing with virtual nodes** for efficient inter-city navigation
+- **Cached inter-city searches** shared between users to minimize redundant work
 - **Real-time traffic processing** with parallel batch updates
 - **Dynamic graph updates** reflecting current traffic conditions
 - **Live GUI** with car visualization and route rendering via WebSocket
@@ -516,18 +516,21 @@ Used as a fallback and for comparison:
 - Current traffic-aware edge weights
 - Time-based cost function (distance/speed)
 
-### Entry-Point Routing
+### Entry-Point Routing (Virtual Nodes)
 
-1. **Identify destination city** (by node-to-city mapping)
-2. **Check cache** for backward Delta-Stepping results from entry points
-3. **If cache miss:**
-   - Compute backward Delta-Stepping from each entry point (parallel goroutines)
-   - Store in cache (TTL: 2 minutes)
-4. **Compute forward Delta-Stepping** to each entry point (parallel goroutines)
-5. **Combine:** forward path + cached backward distances
-6. **Select best path** (lowest total cost)
+Each city has two virtual nodes connected to its entry points with zero-weight edges:
+- **Forward virtual node:** edges FROM each entry point TO this node
+- **Reversed virtual node:** edges FROM this node TO each entry point
 
-**Fallback:** If destination is not in a mapped city or source and destination are in the same city, use direct Delta-Stepping.
+This allows a single Delta-Stepping search to cover all entry points at once instead of running separate searches per entry point.
+
+**Routing steps (inter-city):**
+1. **Inter-city search** (reverse graph): run from dest_entries_forward to src_entries_reversed. Finds the shortest path between any src entry and any dest entry in one search. Cache result.
+2. **Dest to entry** (reverse graph): run from dest node to dest_entries_reversed. Finds shortest path from destination to its nearest entry.
+3. **Src to entry** (reverse graph): run from src_entries_forward to src node. Finds shortest path from source to its nearest entry. Cache result.
+4. **Heuristic comparison:** compare the natural route (via nearest exit) against the best crossing. If the best crossing is cheaper by more than 100 seconds, recalculate per entry point and pick the true best.
+
+**Fallback:** If source and destination are in the same city or not in a mapped city, use direct Delta-Stepping.
 
 ### Traffic Updates
 
