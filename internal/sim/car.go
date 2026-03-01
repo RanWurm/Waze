@@ -2,6 +2,7 @@ package sim
 
 import (
 	"fmt"
+	"sync"
 	"waze/internal/config"
 	"waze/internal/graph"
 )
@@ -30,6 +31,12 @@ type Car struct {
 	State        CarState
 	CurrentSpeed float64
 	ActiveRoute  *TravelRoute
+
+	Mu sync.RWMutex
+
+	LastReportedEdgeID int
+	LastReportedSpeed  float64
+	LastReportTime     float64
 
 	LastRouteReq float64    // time of the last route request
 	NewRouteChan chan []int // channel for a new route
@@ -80,6 +87,10 @@ func (car *Car) InitRoute(routeEdges []int, g *graph.Graph) {
 }
 
 func (car *Car) Move(deltaTime float64, g *graph.Graph, densityMap map[int]int) {
+
+	car.Mu.Lock()
+	defer car.Mu.Unlock()
+
 	// the car is not in driving state. return from the function
 	if car.State != Driving || car.ActiveRoute == nil {
 		return
