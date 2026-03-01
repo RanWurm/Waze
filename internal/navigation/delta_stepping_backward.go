@@ -15,11 +15,15 @@ type backwardDeltaState struct {
 	g         *graph.Graph
 	delta     float64
 	nCPUs     int
-	cityNodes map[int]bool
+	cityNodes map[int]bool // nil means no filter (explore all nodes)
 
-	tent    map[int]float64 // node ID → tentative distance
-	settled map[int]bool    // node ID → whether finalized
-	buckets map[int][]int   // bucket index → list of node IDs
+	tent     map[int]float64 // node ID → tentative distance
+	cameFrom map[int]int     // node ID → predecessor node ID
+	settled  map[int]bool    // node ID → whether finalized
+	buckets  map[int][]int   // bucket index → list of node IDs
+
+	hasTarget bool // if true, stop when targetID is settled
+	targetID  int
 }
 
 func newBackwardDeltaState(g *graph.Graph, entryNodeID int, delta float64, nCPUs int, cityNodes map[int]bool) *backwardDeltaState {
@@ -35,6 +39,7 @@ func newBackwardDeltaState(g *graph.Graph, entryNodeID int, delta float64, nCPUs
 		nCPUs:     nCPUs,
 		cityNodes: cityNodes,
 		tent:      tent,
+		cameFrom:  make(map[int]int),
 		settled:   make(map[int]bool),
 		buckets:   buckets,
 	}
@@ -99,6 +104,7 @@ func (ds *backwardDeltaState) run(maxNodes int) {
 			for _, req := range requests {
 				if !ds.settled[req.node] && req.dist < ds.getTent(req.node) {
 					ds.tent[req.node] = req.dist
+					ds.cameFrom[req.node] = req.from
 					b := int(req.dist / ds.delta)
 					ds.buckets[b] = append(ds.buckets[b], req.node)
 					if b > maxBucket {
@@ -111,6 +117,11 @@ func (ds *backwardDeltaState) run(maxNodes int) {
 		// Mark settled
 		for _, node := range allSettled {
 			ds.settled[node] = true
+		}
+
+		// Stop if target node is reached
+		if ds.hasTarget && ds.settled[ds.targetID] {
+			break
 		}
 
 		// Stop if we've settled enough nodes
@@ -132,6 +143,7 @@ func (ds *backwardDeltaState) run(maxNodes int) {
 		for _, req := range requests {
 			if !ds.settled[req.node] && req.dist < ds.getTent(req.node) {
 				ds.tent[req.node] = req.dist
+				ds.cameFrom[req.node] = req.from
 				b := int(req.dist / ds.delta)
 				ds.buckets[b] = append(ds.buckets[b], req.node)
 				if b > maxBucket {
@@ -191,7 +203,7 @@ func (ds *backwardDeltaState) parallelScanBackwardEdges(nodes []int, isLight boo
 				for _, edge := range reverseEdges {
 					v := edge.From
 
-					if !ds.cityNodes[v] {
+					if ds.cityNodes != nil && !ds.cityNodes[v] {
 						continue
 					}
 
@@ -559,6 +571,28 @@ func ComputeAllForwardSearchesDelta(g *graph.Graph, cityName string, entryPoints
 
 	wg.Wait()
 	return results
+}
+
+// ComputeInterCitySearch runs Delta-Stepping on the reverse graph from srcNodeID to targetNodeID
+// with no city filter. Used for inter-city routing via virtual nodes.
+func ComputeInterCitySearch(g *graph.Graph, srcNodeID int, targetNodeID int) *backwardDeltaState {
+	delta := g.DefaultDelta * 10
+	if delta <= 0 {
+		delta = 0.005
+	}
+
+	nCPUs := runtime.GOMAXPROCS(0)
+	if nCPUs < 1 {
+		nCPUs = 1
+	}
+
+	ds := newBackwardDeltaState(g, srcNodeID, delta, nCPUs, nil)
+	ds.hasTarget = true
+	ds.targetID = targetNodeID
+
+	ds.run(50000)
+
+	return ds
 }
 
 // ComputeAllBackwardSearchesDelta computes backward searches from all entry points in parallel

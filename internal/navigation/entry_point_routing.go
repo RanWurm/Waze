@@ -14,6 +14,7 @@ type EntryPointRouter struct {
 	EntryPointManager  *EntryPointManager
 	BackwardCache      *BackwardSearchCache
 	ForwardCache       *ForwardSearchCache
+	InterCityCache     *InterCityCache
 	CacheTTL           time.Duration
 	mu                 sync.RWMutex
 }
@@ -24,51 +25,160 @@ func NewEntryPointRouter(g *graph.Graph, cacheTTL time.Duration) *EntryPointRout
 		EntryPointManager: NewEntryPointManager(),
 		BackwardCache:     NewBackwardSearchCache(cacheTTL),
 		ForwardCache:      NewForwardSearchCache(cacheTTL),
+		InterCityCache:    NewInterCityCache(cacheTTL),
 		CacheTTL:          cacheTTL,
 	}
 }
 
 // FindPathWithEntryPoints finds shortest path using entry point strategy
 func (epr *EntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*PathResult, error) {
-	srcNode, ok1 := epr.Graph.Nodes[srcID]
-	dstNode, ok2 := epr.Graph.Nodes[dstID]
+	_, ok1 := epr.Graph.Nodes[srcID]
+	_, ok2 := epr.Graph.Nodes[dstID]
 
 	if !ok1 || !ok2 {
 		return nil, fmt.Errorf("one of the nodes does not exist inside the graph")
 	}
 
-	// Check if destination is in a known city
 	dstCity, dstInCity := epr.EntryPointManager.GetCity(dstID)
-
-	// If destination is not in a city or same city as source, use regular A*
 	srcCity, srcInCity := epr.EntryPointManager.GetCity(srcID)
-	if !dstInCity || (srcInCity && srcCity == dstCity) {
+
+	// Same city or not in a city: direct Delta-Stepping
+	if !dstInCity || !srcInCity || srcCity == dstCity {
 		return FindPathDeltaStepping(epr.Graph, srcID, dstID)
 	}
 
-	// Get entry points for destination city
-	entryPoints, exists := epr.EntryPointManager.GetEntryPoints(dstCity)
-	if !exists || len(entryPoints) == 0 {
-		// No entry points defined, fall back to regular A*
+	srcCityObj := epr.EntryPointManager.Cities[srcCity]
+	dstCityObj := epr.EntryPointManager.Cities[dstCity]
+
+	if srcCityObj.ForwardVirtualNodeID == 0 || dstCityObj.ForwardVirtualNodeID == 0 {
 		return FindPathDeltaStepping(epr.Graph, srcID, dstID)
 	}
 
-	// Get or compute backward searches (reverse graph: dist(node → entry)) and
-	// forward searches (normal graph: dist(entry → node)) from all entry points
-	backwardResults := epr.getOrComputeBackwardSearches(dstCity, entryPoints)
-	forwardResults := epr.getOrComputeForwardSearches(dstCity, entryPoints)
+	// Step 1: inter-city search on reverse graph
+	// From dest_forward to src_reversed — finds shortest path between any src entry and any dest entry
+	var interCity *InterCityResult
+	if cached, found := epr.InterCityCache.Get(srcCity, dstCity); found {
+		interCity = cached
+	} else {
+		ds := ComputeInterCitySearch(epr.Graph, dstCityObj.ForwardVirtualNodeID, srcCityObj.ReversedVirtualNodeID)
+		if !ds.settled[srcCityObj.ReversedVirtualNodeID] {
+			// No path between cities, fall back
+			return FindPathDeltaStepping(epr.Graph, srcID, dstID)
+		}
+		interCity = &InterCityResult{
+			SrcCity:    srcCity,
+			DstCity:    dstCity,
+			Tent:       ds.tent,
+			CameFrom:   ds.cameFrom,
+			ComputedAt: time.Now(),
+			TTL:        epr.CacheTTL,
+		}
+		epr.InterCityCache.Set(interCity)
+		fmt.Printf("[STEP1] Inter-city search %s -> %s cached, settled=%d\n", srcCity, dstCity, len(ds.settled))
+	}
 
-	// Find best path through entry points
-	bestPath, bestDistance, bestETA, err := epr.findBestPathThroughEntries(srcID, dstID, srcNode, dstNode, entryPoints, backwardResults, forwardResults)
-	if err != nil {
-		// Fall back to regular A* if entry point routing fails
+	// Step 2: dest node to dest_reversed on reverse graph
+	// Finds shortest path from destination to its nearest entry point
+	step2 := ComputeInterCitySearch(epr.Graph, dstID, dstCityObj.ReversedVirtualNodeID)
+	if !step2.settled[dstCityObj.ReversedVirtualNodeID] {
 		return FindPathDeltaStepping(epr.Graph, srcID, dstID)
+	}
+
+	// Step 3: src_entries_forward to src node on reverse graph
+	// Finds shortest path from source to its nearest entry, cached
+	step3Key := srcCity + "|self"
+	var step3 *InterCityResult
+	if cached, found := epr.InterCityCache.Get(step3Key, srcCity); found {
+		step3 = cached
+	} else {
+		ds := ComputeInterCitySearch(epr.Graph, srcCityObj.ForwardVirtualNodeID, srcID)
+		step3 = &InterCityResult{
+			SrcCity:    step3Key,
+			DstCity:    srcCity,
+			Tent:       ds.tent,
+			CameFrom:   ds.cameFrom,
+			ComputedAt: time.Now(),
+			TTL:        epr.CacheTTL,
+		}
+		epr.InterCityCache.Set(step3)
+	}
+
+	// Step 4: heuristic comparison
+	costSrcToNearestEntry := step3.Tent[srcID]
+	costDestToEntry := step2.tent[dstCityObj.ReversedVirtualNodeID]
+	costBestCrossing := interCity.Tent[srcCityObj.ReversedVirtualNodeID]
+
+	// Find which src entry the source naturally goes through
+	nearestSrcEntry := traceToEntry(step3.CameFrom, srcID)
+	costNearestCrossing := interCity.Tent[nearestSrcEntry]
+
+	routeA := costSrcToNearestEntry + costNearestCrossing + costDestToEntry
+	routeB := costBestCrossing + costDestToEntry
+
+	threshold := 100.0 / 3600.0 // 100 seconds in hours
+
+	var fullPath []int
+
+	if routeB < routeA-threshold {
+		// Nearest exit isn't optimal, recalculate per entry point
+		bestTotal := math.Inf(1)
+		var bestSrcToEntry *PathResult
+		bestEntry := -1
+
+		for _, entry := range srcCityObj.EntryPoints {
+			result, err := FindPathDeltaStepping(epr.Graph, srcID, entry)
+			if err != nil {
+				continue
+			}
+			srcToEntry := result.ETA / 60 // minutes to hours
+			total := srcToEntry + interCity.Tent[entry] + costDestToEntry
+			if total < bestTotal {
+				bestTotal = total
+				bestSrcToEntry = result
+				bestEntry = entry
+			}
+		}
+
+		if bestEntry == -1 {
+			return FindPathDeltaStepping(epr.Graph, srcID, dstID)
+		}
+
+		seg1 := bestSrcToEntry.RouteNodes
+		seg2 := tracePathSkipVirtual(interCity.CameFrom, bestEntry)
+		seg3 := tracePathSkipVirtual(step2.cameFrom, dstCityObj.ReversedVirtualNodeID)
+		fullPath = stitchPaths(seg1, seg2, seg3)
+	} else {
+		// Natural route via nearest exit is good enough
+		seg1 := tracePathSkipVirtual(step3.CameFrom, srcID)
+		seg2 := tracePathSkipVirtual(interCity.CameFrom, srcCityObj.ReversedVirtualNodeID)
+		seg3 := tracePathSkipVirtual(step2.cameFrom, dstCityObj.ReversedVirtualNodeID)
+		fullPath = stitchPaths(seg1, seg2, seg3)
+	}
+
+	if len(fullPath) == 0 {
+		return FindPathDeltaStepping(epr.Graph, srcID, dstID)
+	}
+
+	totalDistance := calcDistFromEdges(epr.Graph, fullPath)
+	// Calculate ETA by summing travel time over the path
+	totalETA := 0.0
+	for i := 0; i < len(fullPath)-1; i++ {
+		for _, edge := range epr.Graph.GetNeighbors(fullPath[i]) {
+			if edge.To == fullPath[i+1] {
+				speed := edge.GetCurrentSpeed()
+				if speed <= 0 {
+					speed = 1.0
+				}
+				totalETA += edge.Length / speed
+				break
+			}
+		}
 	}
 
 	return &PathResult{
-		RouteNodes: bestPath,
-		Distance:   bestDistance,
-		ETA:        bestETA * 60, // convert to minutes
+		RouteNodes: fullPath,
+		Distance:   totalDistance,
+		ETA:        totalETA * 60, // hours to minutes
 	}, nil
 }
 
@@ -282,6 +392,58 @@ func reconstructRouteNodes(cameFrom map[int]int, current int) []int {
 	}
 
 	return path
+}
+
+// traceToEntry follows cameFrom from nodeID until it hits a virtual node (negative ID),
+// returns the last real node (the entry point)
+func traceToEntry(cameFrom map[int]int, nodeID int) int {
+	current := nodeID
+	for {
+		prev, ok := cameFrom[current]
+		if !ok {
+			return current
+		}
+		if prev < 0 {
+			return current
+		}
+		current = prev
+	}
+}
+
+// tracePathSkipVirtual traces cameFrom from nodeID and returns the forward path
+// with virtual nodes (negative IDs) removed
+func tracePathSkipVirtual(cameFrom map[int]int, nodeID int) []int {
+	path := []int{}
+	current := nodeID
+	for {
+		if current >= 0 {
+			path = append(path, current)
+		}
+		prev, ok := cameFrom[current]
+		if !ok {
+			break
+		}
+		current = prev
+	}
+	return path
+}
+
+// stitchPaths joins path segments, removing duplicate nodes at junctions
+func stitchPaths(segments ...[]int) []int {
+	if len(segments) == 0 {
+		return nil
+	}
+	result := append([]int{}, segments[0]...)
+	for _, seg := range segments[1:] {
+		if len(seg) == 0 {
+			continue
+		}
+		if len(result) > 0 && result[len(result)-1] == seg[0] {
+			seg = seg[1:]
+		}
+		result = append(result, seg...)
+	}
+	return result
 }
 
 // calcDistFromEdges calculates distance from node path

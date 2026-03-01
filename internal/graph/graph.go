@@ -82,3 +82,28 @@ func (g *Graph) AddEdge(e *Edge) error {
 func (g *Graph) GetNeighbors(nodeId int) []*Edge {
 	return g.AdjList[nodeId]
 }
+
+func (g *Graph) AddVirtualNode(id int, name string, x, y float64) {
+	g.Nodes[id] = &Node{Id: id, Name: name, X: x, Y: y}
+}
+
+func (g *Graph) AddVirtualEdge(id, from, to int) error {
+	if _, ok := g.Nodes[from]; !ok {
+		return fmt.Errorf("source node %d not found", from)
+	}
+	if _, ok := g.Nodes[to]; !ok {
+		return fmt.Errorf("destination node %d not found", to)
+	}
+	e := &Edge{
+		Id:         id,
+		From:       from,
+		To:         to,
+		Length:     0,
+		SpeedLimit: 1.0,
+	}
+	e.SetCurrentSpeed(1.0)
+	g.Edges[id] = e
+	g.AdjList[from] = append(g.AdjList[from], e)
+	g.ReverseAdjList[to] = append(g.ReverseAdjList[to], e)
+	return nil
+}

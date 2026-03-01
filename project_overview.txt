@@ -1,0 +1,16 @@
+Setup:
+- Define cities and their entry points — internal/navigation/gush_dan_cities.go:8
+- Build the reverse adjacency list — internal/graph/loader.go:55
+
+On route request:
+- On the reverse adjacency list, run from each source-city entry point to all city nodes — internal/navigation/delta_stepping_backward.go:239
+- Cache results — internal/navigation/backward_cache.go:43
+- On the regular adjacency list, run from each destination-city entry point to all city nodes — internal/navigation/delta_stepping_backward.go:500
+- Cache results — internal/navigation/backward_cache.go:107
+- Pick the best entry point pair — internal/navigation/entry_point_routing.go:159
+- Stitch the path — internal/navigation/entry_point_routing.go:62
+
+On traffic update:
+- A batch of traffic reports arrives — internal/server/server.go:40
+- Multiple reports for the same edge are averaged into one speed value — internal/server/server.go:117
+- Each edge's speed is updated with the averaged value — internal/server/server.go:167
