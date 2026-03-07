@@ -5,7 +5,6 @@ import (
 	"math"
 	"runtime"
 	"sync"
-	"time"
 	"waze/internal/graph"
 )
 
@@ -274,16 +273,16 @@ func FindPathDeltaStepping(g *graph.Graph, srcId, dstId int) (*PathResult, error
 
 	ds := newDeltaStepState(g, srcId, delta, nCPUs)
 
-	start := time.Now()
+	// start := time.Now()
 	ds.run(dstId)
-	elapsed := time.Since(start)
+	// elapsed := time.Since(start)
 
 	// Memory stats
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
+	// var mem runtime.MemStats
+	// runtime.ReadMemStats(&mem)
 
-	fmt.Printf("[DELTA-STEP] src=%d dst=%d delta=%.6f settled=%d buckets=%d time=%v heapMB=%.1f\n",
-		srcId, dstId, delta, len(ds.settled), len(ds.buckets), elapsed, float64(mem.HeapAlloc)/(1024*1024))
+	// fmt.Printf("[DELTA-STEP] src=%d dst=%d delta=%.6f settled=%d buckets=%d time=%v heapMB=%.1f\n",
+	// 	srcId, dstId, delta, len(ds.settled), len(ds.buckets), elapsed, float64(mem.HeapAlloc)/(1024*1024))
 
 	// Check if destination was reached
 	if _, reached := ds.tent[dstId]; !reached {

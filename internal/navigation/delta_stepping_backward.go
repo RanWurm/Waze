@@ -1,7 +1,6 @@
 package navigation
 
 import (
-	"fmt"
 	"math"
 	"runtime"
 	"sync"
@@ -265,9 +264,9 @@ func ComputeBackwardSearchDelta(g *graph.Graph, entryNodeID int, cityName string
 
 	ds := newBackwardDeltaState(g, entryNodeID, delta, nCPUs, cityNodes)
 
-	start := time.Now()
+	//start := time.Now()
 	ds.run(maxNodes)
-	elapsed := time.Since(start)
+	//elapsed := time.Since(start)
 
 	// Build distances map (only reachable city nodes)
 	distances := make(map[int]float64)
@@ -278,11 +277,11 @@ func ComputeBackwardSearchDelta(g *graph.Graph, entryNodeID int, cityName string
 	}
 
 	// Memory stats
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
+	// var mem runtime.MemStats
+	// runtime.ReadMemStats(&mem)
 
-	fmt.Printf("[BACKWARD-DS] city=%s entry=%d delta=%.6f settled=%d reachable=%d time=%v heapMB=%.1f\n",
-		cityName, entryNodeID, delta, len(ds.settled), len(distances), elapsed, float64(mem.HeapAlloc)/(1024*1024))
+	// fmt.Printf("[BACKWARD-DS] city=%s entry=%d delta=%.6f settled=%d reachable=%d time=%v heapMB=%.1f\n",
+	// 	cityName, entryNodeID, delta, len(ds.settled), len(distances), elapsed, float64(mem.HeapAlloc)/(1024*1024))
 
 	return &BackwardSearchResult{
 		EntryNodeID: entryNodeID,
@@ -524,9 +523,9 @@ func ComputeForwardSearchDelta(g *graph.Graph, entryNodeID int, cityName string,
 
 	ds := newForwardDeltaState(g, entryNodeID, delta, nCPUs, cityNodes)
 
-	start := time.Now()
+	//start := time.Now()
 	ds.run(maxNodes)
-	elapsed := time.Since(start)
+	//elapsed := time.Since(start)
 
 	// Store all settled distances and predecessors (not just city nodes)
 	// so path reconstruction can follow roads that leave and re-enter the city
@@ -540,11 +539,11 @@ func ComputeForwardSearchDelta(g *graph.Graph, entryNodeID int, cityName string,
 		cameFrom[nodeID] = pred
 	}
 
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
+	// var mem runtime.MemStats
+	// runtime.ReadMemStats(&mem)
 
-	fmt.Printf("[FORWARD-DS] city=%s entry=%d delta=%.6f settled=%d reachable=%d time=%v heapMB=%.1f\n",
-		cityName, entryNodeID, delta, len(ds.settled), len(distances), elapsed, float64(mem.HeapAlloc)/(1024*1024))
+	// fmt.Printf("[FORWARD-DS] city=%s entry=%d delta=%.6f settled=%d reachable=%d time=%v heapMB=%.1f\n",
+	// 	cityName, entryNodeID, delta, len(ds.settled), len(distances), elapsed, float64(mem.HeapAlloc)/(1024*1024))
 
 	return &ForwardSearchResult{
 		EntryNodeID: entryNodeID,

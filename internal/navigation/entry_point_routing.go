@@ -10,13 +10,13 @@ import (
 
 // EntryPointRouter handles routing using entry points and cached searches
 type EntryPointRouter struct {
-	Graph              *graph.Graph
-	EntryPointManager  *EntryPointManager
-	BackwardCache      *BackwardSearchCache
-	ForwardCache       *ForwardSearchCache
-	InterCityCache     *InterCityCache
-	CacheTTL           time.Duration
-	mu                 sync.RWMutex
+	Graph             *graph.Graph
+	EntryPointManager *EntryPointManager
+	BackwardCache     *BackwardSearchCache
+	ForwardCache      *ForwardSearchCache
+	InterCityCache    *InterCityCache
+	CacheTTL          time.Duration
+	mu                sync.RWMutex
 }
 
 func NewEntryPointRouter(g *graph.Graph, cacheTTL time.Duration) *EntryPointRouter {
@@ -74,7 +74,7 @@ func (epr *EntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*PathRes
 			TTL:        epr.CacheTTL,
 		}
 		epr.InterCityCache.Set(interCity)
-		fmt.Printf("[STEP1] Inter-city search %s -> %s cached, settled=%d\n", srcCity, dstCity, len(ds.settled))
+		// fmt.Printf("[STEP1] Inter-city search %s -> %s cached, settled=%d\n", srcCity, dstCity, len(ds.settled))
 	}
 
 	// Step 2: dest node to dest_reversed on reverse graph
@@ -159,12 +159,12 @@ func (epr *EntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*PathRes
 		return FindPathDeltaStepping(epr.Graph, srcID, dstID)
 	}
 
-	totalDistance := calcDistFromEdges(epr.Graph, fullPath)
-	// Calculate ETA by summing travel time over the path
+	totalDistance := 0.0
 	totalETA := 0.0
 	for i := 0; i < len(fullPath)-1; i++ {
 		for _, edge := range epr.Graph.GetNeighbors(fullPath[i]) {
 			if edge.To == fullPath[i+1] {
+				totalDistance += edge.Length
 				speed := edge.GetCurrentSpeed()
 				if speed <= 0 {
 					speed = 1.0
@@ -200,13 +200,13 @@ func (epr *EntryPointRouter) getOrComputeBackwardSearches(cityName string, entry
 		}
 	}
 
-	if cachedCount > 0 {
-		fmt.Printf("[CACHE HIT] Reusing %d/%d cached backward searches for %s\n", cachedCount, len(entryPoints), cityName)
-	}
+	// if cachedCount > 0 {
+	// 	fmt.Printf("[CACHE HIT] Reusing %d/%d cached backward searches for %s\n", cachedCount, len(entryPoints), cityName)
+	// }
 
 	// Compute missing backward searches in parallel
 	if len(needsCompute) > 0 {
-		fmt.Printf("[COMPUTING] Computing %d backward searches in parallel for %s from entries %v\n", len(needsCompute), cityName, needsCompute)
+		//fmt.Printf("[COMPUTING] Computing %d backward searches in parallel for %s from entries %v\n", len(needsCompute), cityName, needsCompute)
 		cityNodes := epr.getCityNodes(cityName)
 		computed := ComputeAllBackwardSearchesDelta(epr.Graph, cityName, needsCompute, cityNodes, epr.CacheTTL)
 
@@ -215,7 +215,7 @@ func (epr *EntryPointRouter) getOrComputeBackwardSearches(cityName string, entry
 			epr.BackwardCache.Set(result)
 			results[needsComputeIdx[i]] = result
 		}
-		fmt.Printf("[CACHED] Stored %d new backward searches for %s (TTL: %v)\n", len(computed), cityName, epr.CacheTTL)
+		//fmt.Printf("[CACHED] Stored %d new backward searches for %s (TTL: %v)\n", len(computed), cityName, epr.CacheTTL)
 	}
 
 	return results
@@ -238,12 +238,12 @@ func (epr *EntryPointRouter) getOrComputeForwardSearches(cityName string, entryP
 		}
 	}
 
-	if cachedCount > 0 {
-		fmt.Printf("[CACHE HIT] Reusing %d/%d cached forward searches for %s\n", cachedCount, len(entryPoints), cityName)
-	}
+	// if cachedCount > 0 {
+	// 	fmt.Printf("[CACHE HIT] Reusing %d/%d cached forward searches for %s\n", cachedCount, len(entryPoints), cityName)
+	// }
 
 	if len(needsCompute) > 0 {
-		fmt.Printf("[COMPUTING] Computing %d forward searches in parallel for %s from entries %v\n", len(needsCompute), cityName, needsCompute)
+		//fmt.Printf("[COMPUTING] Computing %d forward searches in parallel for %s from entries %v\n", len(needsCompute), cityName, needsCompute)
 		cityNodes := epr.getCityNodes(cityName)
 		computed := ComputeAllForwardSearchesDelta(epr.Graph, cityName, needsCompute, cityNodes, epr.CacheTTL)
 
@@ -251,7 +251,7 @@ func (epr *EntryPointRouter) getOrComputeForwardSearches(cityName string, entryP
 			epr.ForwardCache.Set(result)
 			results[needsComputeIdx[i]] = result
 		}
-		fmt.Printf("[CACHED] Stored %d new forward searches for %s (TTL: %v)\n", len(computed), cityName, epr.CacheTTL)
+		//fmt.Printf("[CACHED] Stored %d new forward searches for %s (TTL: %v)\n", len(computed), cityName, epr.CacheTTL)
 	}
 
 	return results
@@ -288,7 +288,7 @@ func (epr *EntryPointRouter) findBestPathThroughEntries(srcID, dstID int, srcNod
 			forwardResult := forwardResults[idx]
 			costFromEntry, reachable := forwardResult.Distances[dstID]
 			if !reachable {
-				results[idx].err = fmt.Errorf("destination not reachable from entry %d", entry)
+				//results[idx].err = fmt.Errorf("destination not reachable from entry %d", entry)
 				return
 			}
 
