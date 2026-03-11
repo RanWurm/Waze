@@ -6,11 +6,16 @@
     },
     "simulation": {
         "server_url":"http://localhost",
-        "num_cars":1000,
+        "num_cars":2,
         "spawn_rate":5.0,
         "report_interval":5,
         "end_spawn":60.0,
-        "delta_time":1.0
+        "delta_time":1.0,
+        "speed_threshold":2,
+        "max_time":10.0,
+        "reroute_interval":60.0,
+        "look_ahead_distance":0.5,
+        "max_route_request":50.0
     },
     "physics": {
         "car_length_km": 0.005,

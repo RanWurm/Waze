@@ -3,7 +3,9 @@ package sim
 import (
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 	"waze/internal/config"
@@ -15,6 +17,8 @@ const TIME_TO_REPORT = 2
 
 const densityWorkers = 8
 
+var fakeJamInjected bool = false
+
 type World struct {
 	Graph         *graph.Graph
 	Cars          []*Car
@@ -24,6 +28,8 @@ type World struct {
 	EdgeDensity   map[int]int
 	Rng           *rand.Rand
 	GlobalCarId   int64
+
+	RouteTokens chan struct{}
 
 	VirtualStartTime time.Time
 
@@ -55,6 +61,7 @@ func NewWorld(mapFile, serverUrl string) (*World, error) {
 		Rng:              rng,
 		densityLocalMaps: localMaps,
 		densityResult:    make(map[int]int),
+		RouteTokens:      make(chan struct{}, int(config.Global.Simulation.MaxRouteRequest)),
 	}, nil
 }
 
@@ -207,17 +214,33 @@ func (world *World) collectActiveReports() []types.TrafficReport {
 		}
 
 		if car.State == Driving && car.ActiveRoute != nil {
-			report := types.TrafficReport{
-				CarID:     car.Id,
-				EdgeID:    car.ActiveRoute.RouteEdges[car.ActiveRoute.CurrentEdgeIndex],
-				Speed:     car.CurrentSpeed,
-				Timestamp: world.GetCurrentTime(),
+			currentEdgeId := car.ActiveRoute.RouteEdges[car.ActiveRoute.CurrentEdgeIndex]
+
+			// check if the edge or speed has changed, or the maximum time after the last report has past
+			edgeChanged := (currentEdgeId != car.LastReportedEdgeID)
+			speedChanged := math.Abs(car.CurrentSpeed-car.LastReportedSpeed) > config.Global.Simulation.SpeedThreshold
+			maxTime := world.SimTime-car.LastReportTime >= config.Global.Simulation.MaxTime
+
+			// if any of the three happened
+			if edgeChanged || speedChanged || maxTime {
+
+				report := types.TrafficReport{
+					CarID:     car.Id,
+					EdgeID:    currentEdgeId,
+					Speed:     car.CurrentSpeed,
+					Timestamp: world.GetCurrentTime(),
+				}
+
+				car.LastReportedEdgeID = currentEdgeId
+				car.LastReportedSpeed = car.CurrentSpeed
+				car.LastReportTime = world.SimTime
+
+				// Include full route for sampled cars (GUI display)
+				if car.Id%10 == 0 {
+					report.RouteEdges = car.ActiveRoute.RouteEdges
+				}
+				reports = append(reports, report)
 			}
-			// Include full route for sampled cars (GUI display)
-			if car.Id%10 == 0 {
-				report.RouteEdges = car.ActiveRoute.RouteEdges
-			}
-			reports = append(reports, report)
 		}
 	}
 
@@ -230,23 +253,166 @@ func (world *World) Tick(dt float64) {
 	world.EdgeDensity = world.calculateDensityParallel()
 	MoveCarsParallel(world.Cars, dt, world.Graph, world.EdgeDensity)
 
-	// time for traffic report
-	if int(world.SimTime)%int(config.Global.Simulation.ReportInterval) == 0 {
-		reports := world.collectActiveReports()
+	currentTime := int(world.SimTime * 10)
+	reportTime := int(config.Global.Simulation.ReportInterval * 10)
 
-		go func(reports []types.TrafficReport) {
-			world.TrafficReport(reports)
-			// fmt.Printf("Sent %d Traffic reports\n", len(reports))
-		}(reports)
-		// reports := world.GenarateTrafficReports()
-		// reportsCopy := make([]types.TrafficReport, len(reports))
-		// copy(reportsCopy, reports)
-		// go func(batch []types.TrafficReport) {
-		// 	err := world.Client.SendTrafficBatch(batch)
-		// 	if err != nil {
-		// 		fmt.Println("Failed to send traffic batch: ", err)
-		// 	}
-		// }(reportsCopy)
+	// time for traffic report
+	if reportTime > 0 && currentTime%reportTime == 0 {
+		reports := world.collectActiveReports()
+		if len(reports) > 0 {
+			go func(reports []types.TrafficReport) {
+				world.TrafficReport(reports)
+				// fmt.Printf("Sent %d Traffic reports\n", len(reports))
+			}(reports)
+		}
+	}
+
+	reRouteTime := int(config.Global.Simulation.ReRouteInterval * 10)
+
+	if reRouteTime > 0 && currentTime%reRouteTime == 0 {
+		// fmt.Println("we start smart routing")
+		world.triggerSmartNavigation()
+	}
+
+}
+
+func (w *World) triggerSmartNavigation() {
+	for _, car := range w.Cars {
+		if car == nil || car.State != Driving || car.ActiveRoute == nil {
+			// fmt.Println("the car is nil?")
+			continue
+		}
+
+		car.Mu.RLock()
+
+		// check if we are in the last edge
+		currIdx := car.ActiveRoute.CurrentEdgeIndex
+		routeLen := len(car.ActiveRoute.RouteEdges)
+
+		if currIdx >= routeLen-1 {
+			car.Mu.RUnlock()
+			// fmt.Println("Current index is bigger the routeLen?")
+			continue
+		}
+
+		accumulatedDistance := 0.0
+		futureIdx := currIdx
+		reachedLookAhead := false
+
+		// add edges length until we reach the accumulatedDistance const
+		for i := currIdx; i < routeLen-1; i++ {
+			edgeID := car.ActiveRoute.RouteEdges[i]
+			edge := w.Graph.Edges[edgeID]
+
+			if edge == nil {
+				// fmt.Println("The edge is nil?")
+				continue
+			}
+
+			// add the length of the next edge
+			accumulatedDistance += edge.Length
+			futureIdx = i
+
+			// check if we are past the LookAheadDistance const
+			if accumulatedDistance >= config.Global.Simulation.LookAheadDistance {
+				reachedLookAhead = true
+				// fmt.Println("Are we past look ahead distance?")
+				break
+			}
+		}
+
+		// if the next edge is the last edge
+		if !reachedLookAhead || futureIdx >= routeLen-1 {
+			car.Mu.RUnlock()
+			// fmt.Println("The next edge is the past edge?")
+			continue
+		}
+
+		futureEdgeID := car.ActiveRoute.RouteEdges[futureIdx]
+		futureEdge := w.Graph.Edges[futureEdgeID]
+
+		lastEdgeID := car.ActiveRoute.RouteEdges[len(car.ActiveRoute.RouteEdges)-1]
+		lastEdge := w.Graph.Edges[lastEdgeID]
+
+		if futureEdge == nil || lastEdge == nil {
+			car.Mu.RUnlock()
+			// fmt.Println("future edge = nil?")
+			continue
+		}
+
+		// the next node and dst node
+		nextNode := futureEdge.To
+		destNode := w.Graph.Edges[lastEdgeID].To
+
+		car.Mu.RUnlock()
+
+		// route request
+		go func(c *Car, requestNode, dest, targetIdx int) {
+
+			select {
+			case w.RouteTokens <- struct{}{}:
+				defer func() { <-w.RouteTokens }()
+			default:
+				return
+			}
+
+			newRoute, err := w.Client.RequestRoute(requestNode, dest)
+
+			if err != nil {
+				errString := strings.ToLower(err.Error())
+				if strings.Contains(errString, "route does not exist") {
+					panic(fmt.Sprintf("SANITY FAIL: No route exists between %d and %d!", requestNode, dest))
+				}
+				return
+			}
+
+			if len(newRoute) == 0 {
+				// fmt.Println("the len is 0")
+				return
+			}
+
+			c.Mu.RLock()
+
+			if c.ActiveRoute == nil || c.State != Driving {
+				// fmt.Println("active route is 0")
+				c.Mu.RUnlock()
+				return
+			}
+
+			carIndexNow := c.ActiveRoute.CurrentEdgeIndex
+			routeEdgesCopy := c.ActiveRoute.RouteEdges
+
+			c.Mu.RUnlock()
+
+			// check if we are no past the target edge
+			if carIndexNow > targetIdx {
+				// fmt.Println("we r past the target edge")
+				return
+			}
+
+			// check if the route is different
+			if different(newRoute, routeEdgesCopy, targetIdx+1) {
+
+				fmt.Printf("\n--- DEBUG: Car %d Rerouted! ---\n", c.Id)
+				// fmt.Printf("Old Route Tail : %v\n", routeEdgesCopy[targetIdx+1:])
+				// fmt.Printf("New Route from Server: %v\n", newRoute)
+				fmt.Println("----------------------------------")
+
+				// append the new route to the old route
+				updatedRoute := make([]int, 0)
+				updatedRoute = append(updatedRoute, routeEdgesCopy[:targetIdx+1]...)
+				updatedRoute = append(updatedRoute, newRoute...)
+
+				// update new active route
+				c.Mu.Lock()
+				if c.ActiveRoute != nil {
+					c.ActiveRoute.RouteEdges = updatedRoute
+				}
+				c.Mu.Unlock()
+
+				fmt.Printf("SmartNav: Car %d rerouted! Avoiding traffic.\n", c.Id)
+			}
+		}(car, nextNode, destNode, futureIdx)
 	}
 }
 

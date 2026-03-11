@@ -16,12 +16,17 @@ type Config struct {
 	} `json:"server"`
 
 	Simulation struct {
-		ServerURL      string  `json:"server_url"`
-		NumCars        int     `json:"num_cars"`
-		SpawnRate      float64 `json:"spawn_rate"`
-		ReportInterval float64 `json:"report_interval"`
-		EndSpawn       float64 `json:"end_spawn"`
-		DeltaTime      float64 `json:"delta_time"`
+		ServerURL         string  `json:"server_url"`
+		NumCars           int     `json:"num_cars"`
+		SpawnRate         float64 `json:"spawn_rate"`
+		ReportInterval    float64 `json:"report_interval"`
+		EndSpawn          float64 `json:"end_spawn"`
+		DeltaTime         float64 `json:"delta_time"`
+		SpeedThreshold    float64 `json:"speed_threshold"`
+		MaxTime           float64 `json:"max_time"`
+		ReRouteInterval   float64 `json:"reroute_interval"`
+		LookAheadDistance float64 `json:"look_ahead_distance"`
+		MaxRouteRequest   float64 `json:"max_route_request"`
 	} `json:"simulation"`
 
 	Physics struct {

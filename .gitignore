@@ -1,0 +1,21 @@
+# Compiled binaries
+server
+benchmark
+benchmark_bin
+concurrent_benchmark
+threads_benchmark
+waze
+bin/
+
+# Benchmark results
+*.csv
+*benchmarks/
+
+# Temp files
+a.txt
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store

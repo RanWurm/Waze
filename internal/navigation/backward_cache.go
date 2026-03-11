@@ -162,6 +162,51 @@ func (fsc *ForwardSearchCache) Set(result *ForwardSearchResult) {
 	}
 }
 
+// InterCityResult stores the result of an inter-city search between two cities' virtual nodes
+type InterCityResult struct {
+	SrcCity    string
+	DstCity    string
+	Tent       map[int]float64
+	CameFrom   map[int]int
+	ComputedAt time.Time
+	TTL        time.Duration
+}
+
+func (r *InterCityResult) IsExpired() bool {
+	return time.Since(r.ComputedAt) > r.TTL
+}
+
+type InterCityCache struct {
+	mu    sync.RWMutex
+	cache map[string]*InterCityResult // key: "srcCity|dstCity"
+	ttl   time.Duration
+}
+
+func NewInterCityCache(ttl time.Duration) *InterCityCache {
+	return &InterCityCache{
+		cache: make(map[string]*InterCityResult),
+		ttl:   ttl,
+	}
+}
+
+func (c *InterCityCache) Get(srcCity, dstCity string) (*InterCityResult, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	key := srcCity + "|" + dstCity
+	result, exists := c.cache[key]
+	if !exists || result.IsExpired() {
+		return nil, false
+	}
+	return result, true
+}
+
+func (c *InterCityCache) Set(result *InterCityResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := result.SrcCity + "|" + result.DstCity
+	c.cache[key] = result
+}
+
 // ComputeBackwardSearch performs backward Dijkstra from an entry point to all nodes in the city
 func ComputeBackwardSearch(g *graph.Graph, entryNodeID int, cityName string, cityNodes map[int]bool, ttl time.Duration) *BackwardSearchResult {
 	// Use reverse adjacency list for backward search
