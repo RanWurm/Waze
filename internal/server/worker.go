@@ -2,10 +2,16 @@ package server
 
 import (
 	"log"
+	"math"
 	"time"
 	"waze/internal/graph"
 	"waze/internal/navigation"
 	"waze/internal/types"
+)
+
+const (
+	shortDistThreshold = 0.03 // Below this → A* is faster
+	longDistThreshold  = 0.10 // At or above this → A* is faster
 )
 
 var JobQueue chan PathRequest
@@ -32,10 +38,13 @@ func worker(g *graph.Graph) {
 		var pathRes *navigation.PathResult
 		var err error
 
-		if GlobalRouter != nil {
+		// Hybrid approach: use A* for short and long distances, EntryPoint for mid
+		dist := euclideanDist(g, req.StartNodeId, req.EndNodeId)
+		if dist < shortDistThreshold || dist >= longDistThreshold {
+			pathRes, err = navigation.FindPathAstar(g, req.StartNodeId, req.EndNodeId)
+		} else if GlobalRouter != nil {
 			pathRes, err = GlobalRouter.FindPathWithEntryPoints(req.StartNodeId, req.EndNodeId)
 		} else {
-			// Fallback to Delta-Stepping
 			pathRes, err = navigation.FindPathDeltaStepping(g, req.StartNodeId, req.EndNodeId)
 		}
 
@@ -75,6 +84,14 @@ func worker(g *graph.Graph) {
 		}
 		req.ResponseChannel <- result
 	}
+}
+
+func euclideanDist(g *graph.Graph, src, dst int) float64 {
+	ns := g.Nodes[src]
+	nd := g.Nodes[dst]
+	dx := ns.X - nd.X
+	dy := ns.Y - nd.Y
+	return math.Sqrt(dx*dx + dy*dy)
 }
 
 // convertNodePathToEdgePath converts a path of node IDs to a path of edge IDs

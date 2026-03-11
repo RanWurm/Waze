@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	rounds        = 10
-	pairsPerRound = 100
+	rounds        = 1
+	pairsPerRound = 1000
 )
 
 type result struct {
@@ -48,6 +48,8 @@ func main() {
 	shortPct := flag.Float64("short-pct", 10, "Percentage of shortest pairs to keep when --short is set")
 	midMode := flag.Bool("mid", false, "Only benchmark the middle pairs by Euclidean distance")
 	midPct := flag.Float64("mid-pct", 10, "Percentage of middle pairs to keep when --mid is set")
+	allMode := flag.Bool("all", false, "Run on all pairs and write CSVs for all/long/short/mid")
+	pct := flag.Float64("pct", 10, "Percentage to use for long/short/mid filtering when --all is set")
 	flag.Parse()
 
 	modeCount := 0
@@ -60,8 +62,11 @@ func main() {
 	if *midMode {
 		modeCount++
 	}
+	if *allMode {
+		modeCount++
+	}
 	if modeCount > 1 {
-		fmt.Fprintln(os.Stderr, "Cannot use --long, --short, and --mid at the same time")
+		fmt.Fprintln(os.Stderr, "Cannot use --long, --short, --mid, and --all at the same time")
 		os.Exit(1)
 	}
 
@@ -227,36 +232,57 @@ func main() {
 		printRoundSummary(r, roundResults)
 	}
 
-	// Write CSV
-	csvPath := "benchmark_results.csv"
-	if *longMode {
-		csvPath = "long_benchmark_results.csv"
-	} else if *shortMode {
-		csvPath = "short_benchmark_results.csv"
-	} else if *midMode {
-		csvPath = "mid_benchmark_results.csv"
-	}
-	csvFile, err := os.Create(csvPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create CSV: %v\n", err)
-		os.Exit(1)
-	}
-	defer csvFile.Close()
-
-	w := csv.NewWriter(csvFile)
-	w.Write([]string{"round", "pair", "src", "dst", "astar_ms", "entrypoint_ms"})
-	for _, res := range allResults {
-		w.Write([]string{
-			strconv.Itoa(res.round),
-			strconv.Itoa(res.pair),
-			strconv.Itoa(res.src),
-			strconv.Itoa(res.dst),
-			fmt.Sprintf("%.3f", res.astarMs),
-			fmt.Sprintf("%.3f", res.deltaMs),
+	// Write CSV(s)
+	if *allMode {
+		// Sort all results by Euclidean distance
+		sorted := make([]result, len(allResults))
+		copy(sorted, allResults)
+		sort.Slice(sorted, func(i, j int) bool {
+			return euclideanDist(g, sorted[i].src, sorted[i].dst) < euclideanDist(g, sorted[j].src, sorted[j].dst)
 		})
+		n := len(sorted)
+
+		// All pairs
+		writeCSV("benchmark_results.csv", allResults)
+
+		// Short: top pct% shortest (beginning of sorted)
+		keepShort := int(math.Ceil(float64(n) * (*pct) / 100.0))
+		if keepShort < 1 {
+			keepShort = 1
+		}
+		writeCSV("short_benchmark_results.csv", sorted[:keepShort])
+
+		// Long: top pct% longest (end of sorted)
+		keepLong := int(math.Ceil(float64(n) * (*pct) / 100.0))
+		if keepLong < 1 {
+			keepLong = 1
+		}
+		writeCSV("long_benchmark_results.csv", sorted[n-keepLong:])
+
+		// Mid: middle pct%
+		trimEachSide := (100.0 - *pct) / 2.0
+		lo := int(math.Floor(float64(n) * trimEachSide / 100.0))
+		hi := int(math.Ceil(float64(n) * (100.0 - trimEachSide) / 100.0))
+		if lo >= hi {
+			lo = n/2 - 1
+			hi = n / 2
+		}
+		writeCSV("mid_benchmark_results.csv", sorted[lo:hi])
+
+		fmt.Printf("\n--all: wrote 4 CSVs (all=%d, short=%d, mid=%d, long=%d rows) at %.0f%%\n",
+			len(allResults), keepShort, hi-lo, keepLong, *pct)
+	} else {
+		csvPath := "benchmark_results.csv"
+		if *longMode {
+			csvPath = "long_benchmark_results.csv"
+		} else if *shortMode {
+			csvPath = "short_benchmark_results.csv"
+		} else if *midMode {
+			csvPath = "mid_benchmark_results.csv"
+		}
+		writeCSV(csvPath, allResults)
+		fmt.Printf("\nCSV written to %s (%d rows)\n", csvPath, len(allResults))
 	}
-	w.Flush()
-	fmt.Printf("\nCSV written to %s (%d rows)\n", csvPath, len(allResults))
 
 	// Overall summary
 	fmt.Println("\n=== Overall Summary ===")
@@ -278,6 +304,28 @@ func main() {
 	// 		fmt.Printf("  src=%d dst=%d\n", p.src, p.dst)
 	// 	}
 	// }
+}
+
+func writeCSV(path string, results []result) {
+	f, err := os.Create(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create CSV %s: %v\n", path, err)
+		return
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	w.Write([]string{"round", "pair", "src", "dst", "astar_ms", "entrypoint_ms"})
+	for _, res := range results {
+		w.Write([]string{
+			strconv.Itoa(res.round),
+			strconv.Itoa(res.pair),
+			strconv.Itoa(res.src),
+			strconv.Itoa(res.dst),
+			fmt.Sprintf("%.3f", res.astarMs),
+			fmt.Sprintf("%.3f", res.deltaMs),
+		})
+	}
+	w.Flush()
 }
 
 func printRoundSummary(round int, results []result) {
