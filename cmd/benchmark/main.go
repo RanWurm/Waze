@@ -243,21 +243,21 @@ func main() {
 		n := len(sorted)
 
 		// All pairs
-		writeCSV("benchmark_results.csv", allResults)
+		writeCSV("benchmarks/benchmark_results.csv", allResults)
 
 		// Short: top pct% shortest (beginning of sorted)
 		keepShort := int(math.Ceil(float64(n) * (*pct) / 100.0))
 		if keepShort < 1 {
 			keepShort = 1
 		}
-		writeCSV("short_benchmark_results.csv", sorted[:keepShort])
+		writeCSV("benchmarks/short_benchmark_results.csv", sorted[:keepShort])
 
 		// Long: top pct% longest (end of sorted)
 		keepLong := int(math.Ceil(float64(n) * (*pct) / 100.0))
 		if keepLong < 1 {
 			keepLong = 1
 		}
-		writeCSV("long_benchmark_results.csv", sorted[n-keepLong:])
+		writeCSV("benchmarks/long_benchmark_results.csv", sorted[n-keepLong:])
 
 		// Mid: middle pct%
 		trimEachSide := (100.0 - *pct) / 2.0
@@ -267,12 +267,12 @@ func main() {
 			lo = n/2 - 1
 			hi = n / 2
 		}
-		writeCSV("mid_benchmark_results.csv", sorted[lo:hi])
+		writeCSV("benchmarks/mid_benchmark_results.csv", sorted[lo:hi])
 
 		fmt.Printf("\n--all: wrote 4 CSVs (all=%d, short=%d, mid=%d, long=%d rows) at %.0f%%\n",
 			len(allResults), keepShort, hi-lo, keepLong, *pct)
 	} else {
-		csvPath := "benchmark_results.csv"
+		csvPath := "benchmarks/benchmark_results.csv"
 		if *longMode {
 			csvPath = "long_benchmark_results.csv"
 		} else if *shortMode {

@@ -247,7 +247,7 @@ func (s *Server) HandleNavigation(w http.ResponseWriter, r *http.Request) {
 
 	// check if the route is in cache
 	if cachedResponse, exists := s.Cache.Get(fromId, toId); exists {
-		fmt.Printf("The route (%d -> %d) is from the cache\n", fromId, toId)
+		// fmt.Printf("The route (%d -> %d) is from the cache\n", fromId, toId)
 		// send response
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cachedResponse)
@@ -279,4 +279,18 @@ func (s *Server) HandleNavigation(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result.Response)
 	}
+}
+
+// HandleSaveTimings saves route timing data to CSV
+func (s *Server) HandleSaveTimings(w http.ResponseWriter, r *http.Request) {
+	SaveTimingsToCSV()
+	count, totalMs, avgMs := GetTimingStats()
+	response := map[string]interface{}{
+		"count":    count,
+		"total_ms": totalMs,
+		"avg_ms":   avgMs,
+		"mode":     RoutingMode,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

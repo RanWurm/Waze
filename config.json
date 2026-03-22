@@ -6,7 +6,7 @@
     },
     "simulation": {
         "server_url":"http://localhost",
-        "num_cars":2,
+        "num_cars":2000,
         "spawn_rate":5.0,
         "report_interval":5,
         "end_spawn":60.0,

@@ -90,10 +90,10 @@ def plot_single(csv_path, out_dir, out_name):
 
 def plot_all():
     modes = [
-        ("All Pairs", "benchmark_results.csv"),
-        ("Short", "short_benchmark_results.csv"),
-        ("Mid", "mid_benchmark_results.csv"),
-        ("Long", "long_benchmark_results.csv"),
+        ("All Pairs", "benchmarks/benchmark_results.csv"),
+        ("Short", "benchmarks/short_benchmark_results.csv"),
+        ("Mid", "benchmarks/mid_benchmark_results.csv"),
+        ("Long", "benchmarks/long_benchmark_results.csv"),
     ]
     colors = {"astar": "#2196F3", "delta": "#FF9800"}
 
@@ -117,7 +117,7 @@ def plot_all():
         plot_pie(axes[1][col], astar, delta, f"{label} — Win Rate", colors)
 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    out_dir = "allbenchmarks"
+    out_dir = "benchmarks/allbenchmarks"
     os.makedirs(out_dir, exist_ok=True)
     # Use pair count from first CSV for naming
     first_rows = load_csv(modes[0][1])
@@ -130,7 +130,7 @@ def plot_all():
     plt.close()
 
 def plot_threads():
-    csv_path = "threads_benchmark_results.csv"
+    csv_path = "benchmarks/threads_benchmark_results.csv"
     if not os.path.exists(csv_path):
         print(f"Error: {csv_path} not found. Run the Go benchmark with --threads first.", file=sys.stderr)
         sys.exit(1)
@@ -202,7 +202,7 @@ def plot_threads():
                      textcoords="offset points", xytext=(0, -15), ha="center", fontsize=8, color=colors["delta"])
 
     plt.tight_layout(rect=[0, 0, 1, 0.93])
-    out_dir = "threadbenchmarks"
+    out_dir = "benchmarks/threadbenchmarks"
     os.makedirs(out_dir, exist_ok=True)
     num_pairs = len([r for r in rows if r["threads"] == thread_counts[0]])
     out_path = f"{out_dir}/{num_pairs}pairs.png"
@@ -237,17 +237,17 @@ def main():
         return
 
     if args.long:
-        csv_path = "long_benchmark_results.csv"
-        out_dir = "longbenchmarks"
+        csv_path = "benchmarks/long_benchmark_results.csv"
+        out_dir = "benchmarks/longbenchmarks"
     elif args.short:
-        csv_path = "short_benchmark_results.csv"
-        out_dir = "shortbenchmarks"
+        csv_path = "benchmarks/short_benchmark_results.csv"
+        out_dir = "benchmarks/shortbenchmarks"
     elif args.mid:
-        csv_path = "mid_benchmark_results.csv"
-        out_dir = "midbenchmarks"
+        csv_path = "benchmarks/mid_benchmark_results.csv"
+        out_dir = "benchmarks/midbenchmarks"
     else:
-        csv_path = "benchmark_results.csv"
-        out_dir = "benchmarks"
+        csv_path = "benchmarks/benchmark_results.csv"
+        out_dir = "benchmarks/benchmarks"
 
     if not os.path.exists(csv_path):
         print(f"Error: {csv_path} not found. Run the Go benchmark first.", file=sys.stderr)

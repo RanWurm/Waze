@@ -141,9 +141,11 @@ func initStartingTraffic(numCars int, w *sim.World) {
 }
 
 func trySpawnCarAtLoc(w *sim.World, id int, src int) {
-	dst := w.Rng.Intn(len(w.Graph.NodesArr))
+	dstIdx := w.Rng.Intn(len(w.Graph.NodesArr))
+	dst := w.Graph.NodesArr[dstIdx]
 	if src == dst {
-		dst++
+		dstIdx = (dstIdx + 1) % len(w.Graph.NodesArr)
+		dst = w.Graph.NodesArr[dstIdx]
 	}
 	route, err := w.Client.RequestRoute(src, dst)
 	if err == nil && len(route) > 0 {

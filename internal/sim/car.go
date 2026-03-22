@@ -2,6 +2,7 @@ package sim
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"waze/internal/config"
 	"waze/internal/graph"
@@ -38,18 +39,22 @@ type Car struct {
 	LastReportedSpeed  float64
 	LastReportTime     float64
 
-	LastRouteReq float64    // time of the last route request
-	NewRouteChan chan []int // channel for a new route
+	LastRouteReq    float64    // time of the last route request
+	NewRouteChan    chan []int // channel for a new route
+	NextRerouteTime float64    // next time this car should check for reroute
 }
 
 func NewCar(id, userId int, currentTime float64) *Car {
+	// Random offset between 10-60 seconds for reroute timing
+	randomOffset := 10.0 + rand.Float64()*50.0
 	return &Car{
-		Id:           id,
-		UserId:       userId,
-		State:        Idle,
-		CurrentSpeed: 0,
-		LastRouteReq: currentTime,
-		NewRouteChan: make(chan []int, 1),
+		Id:              id,
+		UserId:          userId,
+		State:           Idle,
+		CurrentSpeed:    0,
+		LastRouteReq:    currentTime,
+		NewRouteChan:    make(chan []int, 1),
+		NextRerouteTime: currentTime + 60.0 + randomOffset,
 	}
 }
 
