@@ -16,6 +16,7 @@ type BidirEntryPointRouter struct {
 	ForwardCache      *ForwardSearchCache
 	InterCityCache    *InterCityCache
 	CacheTTL          time.Duration
+	CachingEnabled    bool
 	mu                sync.RWMutex
 }
 
@@ -27,6 +28,7 @@ func NewBidirEntryPointRouter(g *graph.Graph, cacheTTL time.Duration) *BidirEntr
 		ForwardCache:      NewForwardSearchCache(cacheTTL),
 		InterCityCache:    NewInterCityCache(cacheTTL),
 		CacheTTL:          cacheTTL,
+		CachingEnabled:    cacheTTL > time.Second,
 	}
 }
 
@@ -57,12 +59,14 @@ func (epr *BidirEntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*Pa
 	// Step 1: inter-city search on reverse graph
 	// From dest_forward to src_reversed — finds shortest path between any src entry and any dest entry
 	var interCity *InterCityResult
-	if cached, found := epr.InterCityCache.Get(srcCity, dstCity); found {
-		interCity = cached
-	} else {
-		ds := ComputeInterCitySearch(epr.Graph, dstCityObj.ForwardVirtualNodeID, srcCityObj.ReversedVirtualNodeID)
+	if epr.CachingEnabled {
+		if cached, found := epr.InterCityCache.Get(srcCity, dstCity); found {
+			interCity = cached
+		}
+	}
+	if interCity == nil {
+		ds := ComputeInterCitySearchAstar(epr.Graph, dstCityObj.ForwardVirtualNodeID, srcCityObj.ReversedVirtualNodeID)
 		if !ds.settled[srcCityObj.ReversedVirtualNodeID] {
-			// No path between cities, fall back
 			return FindPathBidirectionalAstar(epr.Graph, srcID, dstID)
 		}
 		interCity = &InterCityResult{
@@ -73,13 +77,14 @@ func (epr *BidirEntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*Pa
 			ComputedAt: time.Now(),
 			TTL:        epr.CacheTTL,
 		}
-		epr.InterCityCache.Set(interCity)
-		// fmt.Printf("[STEP1] Inter-city search %s -> %s cached, settled=%d\n", srcCity, dstCity, len(ds.settled))
+		if epr.CachingEnabled {
+			epr.InterCityCache.Set(interCity)
+		}
 	}
 
 	// Step 2: dest node to dest_reversed on reverse graph
 	// Finds shortest path from destination to its nearest entry point
-	step2 := ComputeInterCitySearch(epr.Graph, dstID, dstCityObj.ReversedVirtualNodeID)
+	step2 := ComputeInterCitySearchAstar(epr.Graph, dstID, dstCityObj.ReversedVirtualNodeID)
 	if !step2.settled[dstCityObj.ReversedVirtualNodeID] {
 		return FindPathBidirectionalAstar(epr.Graph, srcID, dstID)
 	}
@@ -88,10 +93,13 @@ func (epr *BidirEntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*Pa
 	// Finds shortest path from source to its nearest entry, cached
 	step3Key := srcCity + "|self"
 	var step3 *InterCityResult
-	if cached, found := epr.InterCityCache.Get(step3Key, srcCity); found {
-		step3 = cached
-	} else {
-		ds := ComputeInterCitySearch(epr.Graph, srcCityObj.ForwardVirtualNodeID, srcID)
+	if epr.CachingEnabled {
+		if cached, found := epr.InterCityCache.Get(step3Key, srcCity); found {
+			step3 = cached
+		}
+	}
+	if step3 == nil {
+		ds := ComputeInterCitySearchAstar(epr.Graph, srcCityObj.ForwardVirtualNodeID, srcID)
 		step3 = &InterCityResult{
 			SrcCity:    step3Key,
 			DstCity:    srcCity,
@@ -100,7 +108,9 @@ func (epr *BidirEntryPointRouter) FindPathWithEntryPoints(srcID, dstID int) (*Pa
 			ComputedAt: time.Now(),
 			TTL:        epr.CacheTTL,
 		}
-		epr.InterCityCache.Set(step3)
+		if epr.CachingEnabled {
+			epr.InterCityCache.Set(step3)
+		}
 	}
 
 	// Step 4: heuristic comparison

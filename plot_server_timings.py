@@ -11,9 +11,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def find_latest_csvs(directory="benchmarks", count=2):
-    pattern = os.path.join(directory, "route_timings_*.csv")
-    files = glob.glob(pattern)
+def find_latest_csvs(count=2):
+    files = []
+    for directory in ["benchmarks/server", "benchmarks"]:
+        for pattern in ["*.csv", "route_timings_*.csv"]:
+            files.extend(glob.glob(os.path.join(directory, pattern)))
+    # Deduplicate
+    files = list(set(files))
     files.sort(key=os.path.getmtime, reverse=True)
     return files[:count]
 
@@ -89,7 +93,7 @@ def plot_pie(ax, ms1, ms2, label1, label2, colors):
 def main():
     csvs = find_latest_csvs()
     if len(csvs) < 2:
-        print("Error: Need at least 2 route_timings CSVs in benchmarks/", file=sys.stderr)
+        print("Error: Need at least 2 CSVs in benchmarks/server/ or benchmarks/", file=sys.stderr)
         sys.exit(1)
 
     print(f"Comparing:\n  {csvs[0]}\n  {csvs[1]}")
