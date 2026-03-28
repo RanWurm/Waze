@@ -50,6 +50,9 @@ func main() {
 
 	fmt.Println("Simulation Finished!")
 	fmt.Printf("total run time: %v\n", time.Since(start))
+
+	// Save route timings to CSV for plotting
+	world.Client.SaveTimings()
 }
 
 func loop(carCounter int, dt float64, world *sim.World) {

@@ -190,3 +190,18 @@ func (c *Client) MeasurePerformance(reports []types.TrafficReport, mode string) 
 	}
 	return time.Since(start)
 }
+
+// SaveTimings calls the server to save route timing data to CSV
+func (c *Client) SaveTimings() error {
+	resp, err := c.Http.Get(c.BaseURL + "/api/save-timings")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	fmt.Printf("Route timings saved: %v queries, avg %.2f ms, mode: %v\n",
+		result["count"], result["avg_ms"], result["mode"])
+	return nil
+}

@@ -16,17 +16,17 @@ import (
 )
 
 const (
-	rounds        = 1
+	rounds        = 2
 	pairsPerRound = 1000
 )
 
 type result struct {
-	round   int
-	pair    int
-	src     int
-	dst     int
-	astarMs float64
-	deltaMs float64
+	round     int
+	pair      int
+	src       int
+	dst       int
+	cacheMs   float64
+	noCacheMs float64
 }
 
 type pair struct {
@@ -79,9 +79,12 @@ func main() {
 	fmt.Printf("Graph loaded: %d nodes, %d edges\n", len(g.Nodes), len(g.Edges))
 	fmt.Printf("CPUs: %d\n", runtime.GOMAXPROCS(0))
 
-	// Initialize Entry Point Router (same as real server)
-	router := navigation.NewEntryPointRouter(g, 2*time.Minute)
-	navigation.InitializeGushDanCities(router)
+	// Initialize two routers: one with cache, one without
+	routerWithCache := navigation.NewBidirEntryPointRouter(g, 2*time.Minute)
+	navigation.InitializeBidirGushDanCities(routerWithCache)
+
+	routerNoCache := navigation.NewBidirEntryPointRouter(g, 0) // 0 TTL disables caching
+	navigation.InitializeBidirGushDanCities(routerNoCache)
 
 	nodes := g.NodesArr
 	if len(nodes) < 2 {
@@ -89,7 +92,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Redirect stdout during delta-stepping calls to suppress its internal print
+	// Redirect stdout during entry point calls to suppress internal prints
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to open /dev/null: %v\n", err)
@@ -98,10 +101,6 @@ func main() {
 	defer devNull.Close()
 
 	var allResults []result
-	// var mismatches int  // uncomment if tracking ETA mismatches
-	// Failure tracking - uncomment to use
-	// var astarFailed []pair
-	// var epFailed []pair
 
 	for r := 1; r <= rounds; r++ {
 		fmt.Printf("\n=== Round %d/%d ===\n", r, rounds)
@@ -160,35 +159,33 @@ func main() {
 			fmt.Printf("  --mid: kept %d pairs (middle %.0f%% by Euclidean distance)\n", len(pairs), *midPct)
 		}
 
-		// Run A* on ALL pairs first
-		fmt.Printf("  Running A* on %d pairs...\n", len(pairs))
-		astarTimes := make([]float64, len(pairs))
-		astarETAs := make([]float64, len(pairs))
-		astarOk := make([]bool, len(pairs))
-		for i, p := range pairs {
-			start := time.Now()
-			res, err := navigation.FindPathAstar(g, p.src, p.dst)
-			astarTimes[i] = float64(time.Since(start).Microseconds()) / 1000.0
-			if err == nil {
-				astarETAs[i] = res.ETA
-				astarOk[i] = true
-			}
-		}
-
-		// Run EntryPoint routing on ALL pairs second
-		fmt.Printf("  Running EntryPoint routing on %d pairs...\n", len(pairs))
-		deltaTimes := make([]float64, len(pairs))
-		deltaETAs := make([]float64, len(pairs))
-		deltaOk := make([]bool, len(pairs))
+		// Run Bidir Hybrid with Cache on ALL pairs first
+		fmt.Printf("  Running Bidir Hybrid WITH Cache on %d pairs...\n", len(pairs))
+		cacheTimes := make([]float64, len(pairs))
+		cacheOk := make([]bool, len(pairs))
 		origStdout := os.Stdout
 		os.Stdout = devNull
 		for i, p := range pairs {
 			start := time.Now()
-			res, err := router.FindPathWithEntryPoints(p.src, p.dst)
-			deltaTimes[i] = float64(time.Since(start).Microseconds()) / 1000.0
+			_, err := routerWithCache.FindPathWithEntryPoints(p.src, p.dst)
+			cacheTimes[i] = float64(time.Since(start).Microseconds()) / 1000.0
 			if err == nil {
-				deltaETAs[i] = res.ETA
-				deltaOk[i] = true
+				cacheOk[i] = true
+			}
+		}
+		os.Stdout = origStdout
+
+		// Run Bidir Hybrid without Cache on ALL pairs second
+		fmt.Printf("  Running Bidir Hybrid WITHOUT Cache on %d pairs...\n", len(pairs))
+		noCacheTimes := make([]float64, len(pairs))
+		noCacheOk := make([]bool, len(pairs))
+		os.Stdout = devNull
+		for i, p := range pairs {
+			start := time.Now()
+			_, err := routerNoCache.FindPathWithEntryPoints(p.src, p.dst)
+			noCacheTimes[i] = float64(time.Since(start).Microseconds()) / 1000.0
+			if err == nil {
+				noCacheOk[i] = true
 			}
 		}
 		os.Stdout = origStdout
@@ -197,34 +194,18 @@ func main() {
 		var roundResults []result
 		valid := 0
 		for i, p := range pairs {
-			// Track failures - uncomment to use
-			// if !astarOk[i] {
-			// 	astarFailed = append(astarFailed, p)
-			// }
-			// if !deltaOk[i] {
-			// 	epFailed = append(epFailed, p)
-			// }
-			if !deltaOk[i] || !astarOk[i] {
+			if !cacheOk[i] || !noCacheOk[i] {
 				continue
 			}
 			valid++
 
-			// Correctness check - uncomment to track ETA mismatches
-			// etaDiff := math.Abs(astarETAs[i] - deltaETAs[i])
-			// tolerance := math.Max(astarETAs[i], deltaETAs[i]) * 0.01
-			// if etaDiff > tolerance && etaDiff > 0.01 {
-			// 	mismatches++
-			// 	fmt.Fprintf(os.Stderr, "  MISMATCH pair %d: src=%d dst=%d A*=%.4f Delta=%.4f diff=%.4f min\n",
-			// 		valid, p.src, p.dst, astarETAs[i], deltaETAs[i], etaDiff)
-			// }
-
 			roundResults = append(roundResults, result{
-				round:   r,
-				pair:    valid,
-				src:     p.src,
-				dst:     p.dst,
-				astarMs: astarTimes[i],
-				deltaMs: deltaTimes[i],
+				round:     r,
+				pair:      valid,
+				src:       p.src,
+				dst:       p.dst,
+				cacheMs:   cacheTimes[i],
+				noCacheMs: noCacheTimes[i],
 			})
 		}
 
@@ -243,21 +224,21 @@ func main() {
 		n := len(sorted)
 
 		// All pairs
-		writeCSV("benchmarks/benchmark_results.csv", allResults)
+		writeCSV("benchmarks/bidir_hybrid_cache_vs_nocache_benchmark_results.csv", allResults)
 
 		// Short: top pct% shortest (beginning of sorted)
 		keepShort := int(math.Ceil(float64(n) * (*pct) / 100.0))
 		if keepShort < 1 {
 			keepShort = 1
 		}
-		writeCSV("benchmarks/short_benchmark_results.csv", sorted[:keepShort])
+		writeCSV("benchmarks/bidir_hybrid_cache_vs_nocache_short_benchmark_results.csv", sorted[:keepShort])
 
 		// Long: top pct% longest (end of sorted)
 		keepLong := int(math.Ceil(float64(n) * (*pct) / 100.0))
 		if keepLong < 1 {
 			keepLong = 1
 		}
-		writeCSV("benchmarks/long_benchmark_results.csv", sorted[n-keepLong:])
+		writeCSV("benchmarks/bidir_hybrid_cache_vs_nocache_long_benchmark_results.csv", sorted[n-keepLong:])
 
 		// Mid: middle pct%
 		trimEachSide := (100.0 - *pct) / 2.0
@@ -267,18 +248,18 @@ func main() {
 			lo = n/2 - 1
 			hi = n / 2
 		}
-		writeCSV("benchmarks/mid_benchmark_results.csv", sorted[lo:hi])
+		writeCSV("benchmarks/bidir_hybrid_cache_vs_nocache_mid_benchmark_results.csv", sorted[lo:hi])
 
 		fmt.Printf("\n--all: wrote 4 CSVs (all=%d, short=%d, mid=%d, long=%d rows) at %.0f%%\n",
 			len(allResults), keepShort, hi-lo, keepLong, *pct)
 	} else {
-		csvPath := "benchmarks/benchmark_results.csv"
+		csvPath := "benchmarks/bidir_hybrid_cache_vs_nocache_benchmark_results.csv"
 		if *longMode {
-			csvPath = "long_benchmark_results.csv"
+			csvPath = "benchmarks/bidir_hybrid_cache_vs_nocache_long_benchmark_results.csv"
 		} else if *shortMode {
-			csvPath = "short_benchmark_results.csv"
+			csvPath = "benchmarks/bidir_hybrid_cache_vs_nocache_short_benchmark_results.csv"
 		} else if *midMode {
-			csvPath = "mid_benchmark_results.csv"
+			csvPath = "benchmarks/bidir_hybrid_cache_vs_nocache_mid_benchmark_results.csv"
 		}
 		writeCSV(csvPath, allResults)
 		fmt.Printf("\nCSV written to %s (%d rows)\n", csvPath, len(allResults))
@@ -287,23 +268,6 @@ func main() {
 	// Overall summary
 	fmt.Println("\n=== Overall Summary ===")
 	printOverallSummary(allResults)
-	// if mismatches > 0 {
-	// 	fmt.Printf("\nWARNING: %d ETA mismatches detected (see stderr)\n", mismatches)
-	// }
-
-	// Print failures - uncomment to use
-	// if len(astarFailed) > 0 {
-	// 	fmt.Printf("\n=== A* Failures (%d pairs) ===\n", len(astarFailed))
-	// 	for _, p := range astarFailed {
-	// 		fmt.Printf("  src=%d dst=%d\n", p.src, p.dst)
-	// 	}
-	// }
-	// if len(epFailed) > 0 {
-	// 	fmt.Printf("\n=== EntryPoint Failures (%d pairs) ===\n", len(epFailed))
-	// 	for _, p := range epFailed {
-	// 		fmt.Printf("  src=%d dst=%d\n", p.src, p.dst)
-	// 	}
-	// }
 }
 
 func writeCSV(path string, results []result) {
@@ -314,15 +278,15 @@ func writeCSV(path string, results []result) {
 	}
 	defer f.Close()
 	w := csv.NewWriter(f)
-	w.Write([]string{"round", "pair", "src", "dst", "astar_ms", "entrypoint_ms"})
+	w.Write([]string{"round", "pair", "src", "dst", "bidir_hybrid_cache_ms", "bidir_hybrid_nocache_ms"})
 	for _, res := range results {
 		w.Write([]string{
 			strconv.Itoa(res.round),
 			strconv.Itoa(res.pair),
 			strconv.Itoa(res.src),
 			strconv.Itoa(res.dst),
-			fmt.Sprintf("%.3f", res.astarMs),
-			fmt.Sprintf("%.3f", res.deltaMs),
+			fmt.Sprintf("%.3f", res.cacheMs),
+			fmt.Sprintf("%.3f", res.noCacheMs),
 		})
 	}
 	w.Flush()
@@ -334,28 +298,28 @@ func printRoundSummary(round int, results []result) {
 		return
 	}
 
-	astarTimes := make([]float64, len(results))
-	deltaTimes := make([]float64, len(results))
+	cacheTimes := make([]float64, len(results))
+	noCacheTimes := make([]float64, len(results))
 	for i, r := range results {
-		astarTimes[i] = r.astarMs
-		deltaTimes[i] = r.deltaMs
+		cacheTimes[i] = r.cacheMs
+		noCacheTimes[i] = r.noCacheMs
 	}
 
-	sort.Float64s(astarTimes)
-	sort.Float64s(deltaTimes)
+	sort.Float64s(cacheTimes)
+	sort.Float64s(noCacheTimes)
 
 	fmt.Printf("Round %d (%d pairs):\n", round, len(results))
-	fmt.Printf("  A*:    mean=%.2f  median=%.2f  min=%.2f  max=%.2f ms\n",
-		mean(astarTimes), median(astarTimes), astarTimes[0], astarTimes[len(astarTimes)-1])
-	fmt.Printf("  EP: mean=%.2f  median=%.2f  min=%.2f  max=%.2f ms\n",
-		mean(deltaTimes), median(deltaTimes), deltaTimes[0], deltaTimes[len(deltaTimes)-1])
+	fmt.Printf("  Hybrid Cache:    mean=%.2f  median=%.2f  min=%.2f  max=%.2f ms\n",
+		mean(cacheTimes), median(cacheTimes), cacheTimes[0], cacheTimes[len(cacheTimes)-1])
+	fmt.Printf("  Hybrid NoCache:  mean=%.2f  median=%.2f  min=%.2f  max=%.2f ms\n",
+		mean(noCacheTimes), median(noCacheTimes), noCacheTimes[0], noCacheTimes[len(noCacheTimes)-1])
 
-	speedup := mean(astarTimes) / mean(deltaTimes)
-	if mean(deltaTimes) > mean(astarTimes) {
-		speedup = mean(deltaTimes) / mean(astarTimes)
-		fmt.Printf("  A* is %.2fx faster on average\n", speedup)
+	speedup := mean(noCacheTimes) / mean(cacheTimes)
+	if mean(cacheTimes) > mean(noCacheTimes) {
+		speedup = mean(cacheTimes) / mean(noCacheTimes)
+		fmt.Printf("  Hybrid NoCache is %.2fx faster on average\n", speedup)
 	} else {
-		fmt.Printf("  EntryPoint is %.2fx faster on average\n", speedup)
+		fmt.Printf("  Hybrid Cache is %.2fx faster on average\n", speedup)
 	}
 }
 
@@ -365,28 +329,28 @@ func printOverallSummary(results []result) {
 		return
 	}
 
-	astarTimes := make([]float64, len(results))
-	deltaTimes := make([]float64, len(results))
+	cacheTimes := make([]float64, len(results))
+	noCacheTimes := make([]float64, len(results))
 	for i, r := range results {
-		astarTimes[i] = r.astarMs
-		deltaTimes[i] = r.deltaMs
+		cacheTimes[i] = r.cacheMs
+		noCacheTimes[i] = r.noCacheMs
 	}
 
-	sort.Float64s(astarTimes)
-	sort.Float64s(deltaTimes)
+	sort.Float64s(cacheTimes)
+	sort.Float64s(noCacheTimes)
 
 	fmt.Printf("Total pairs: %d\n", len(results))
-	fmt.Printf("  A*:    mean=%.2f  median=%.2f  stddev=%.2f  min=%.2f  max=%.2f ms\n",
-		mean(astarTimes), median(astarTimes), stddev(astarTimes), astarTimes[0], astarTimes[len(astarTimes)-1])
-	fmt.Printf("  EP: mean=%.2f  median=%.2f  stddev=%.2f  min=%.2f  max=%.2f ms\n",
-		mean(deltaTimes), median(deltaTimes), stddev(deltaTimes), deltaTimes[0], deltaTimes[len(deltaTimes)-1])
+	fmt.Printf("  Hybrid Cache:    mean=%.2f  median=%.2f  stddev=%.2f  min=%.2f  max=%.2f ms\n",
+		mean(cacheTimes), median(cacheTimes), stddev(cacheTimes), cacheTimes[0], cacheTimes[len(cacheTimes)-1])
+	fmt.Printf("  Hybrid NoCache:  mean=%.2f  median=%.2f  stddev=%.2f  min=%.2f  max=%.2f ms\n",
+		mean(noCacheTimes), median(noCacheTimes), stddev(noCacheTimes), noCacheTimes[0], noCacheTimes[len(noCacheTimes)-1])
 
-	speedup := mean(astarTimes) / mean(deltaTimes)
-	if mean(deltaTimes) > mean(astarTimes) {
-		speedup = mean(deltaTimes) / mean(astarTimes)
-		fmt.Printf("  A* is %.2fx faster on average\n", speedup)
+	speedup := mean(noCacheTimes) / mean(cacheTimes)
+	if mean(cacheTimes) > mean(noCacheTimes) {
+		speedup = mean(cacheTimes) / mean(noCacheTimes)
+		fmt.Printf("  Hybrid NoCache is %.2fx faster on average\n", speedup)
 	} else {
-		fmt.Printf("  EntryPoint is %.2fx faster on average\n", speedup)
+		fmt.Printf("  Hybrid Cache is %.2fx faster on average\n", speedup)
 	}
 }
 

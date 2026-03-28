@@ -6,10 +6,22 @@ concurrent_benchmark
 threads_benchmark
 waze
 bin/
+astar_bidir_benchmark
+bidir_delta_benchmark
+bidir_entrypoint_benchmark
+bidir_vs_bidir_entrypoint_benchmark
+simulation
 
 # Benchmark results
 *.csv
 *benchmarks/
+
+# Reports
+REPORT.md
+REPORT_HEB.md
+
+# Diagrams
+*.mmd
 
 # Temp files
 a.txt
@@ -19,3 +31,4 @@ a.txt
 
 # OS
 .DS_Store
+comparison.png

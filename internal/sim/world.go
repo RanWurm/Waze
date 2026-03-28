@@ -224,11 +224,20 @@ func (world *World) collectActiveReports() []types.TrafficReport {
 			// if any of the three happened
 			if edgeChanged || speedChanged || maxTime {
 
+				progress := 0.0
+				if car.ActiveRoute.CurrentEdgeLen > 0 {
+					progress = car.ActiveRoute.EdgeProgress / car.ActiveRoute.CurrentEdgeLen
+					if progress > 1 {
+						progress = 1
+					}
+				}
+
 				report := types.TrafficReport{
-					CarID:     car.Id,
-					EdgeID:    currentEdgeId,
-					Speed:     car.CurrentSpeed,
-					Timestamp: world.GetCurrentTime(),
+					CarID:        car.Id,
+					EdgeID:       currentEdgeId,
+					Speed:        car.CurrentSpeed,
+					Timestamp:    world.GetCurrentTime(),
+					EdgeProgress: progress,
 				}
 
 				car.LastReportedEdgeID = currentEdgeId
@@ -267,12 +276,8 @@ func (world *World) Tick(dt float64) {
 		}
 	}
 
-	reRouteTime := int(config.Global.Simulation.ReRouteInterval * 10)
-
-	if reRouteTime > 0 && currentTime%reRouteTime == 0 {
-		// fmt.Println("we start smart routing")
-		world.triggerSmartNavigation()
-	}
+	// Check rerouting every tick - each car has its own schedule
+	world.triggerSmartNavigation()
 
 }
 
@@ -282,6 +287,14 @@ func (w *World) triggerSmartNavigation() {
 			// fmt.Println("the car is nil?")
 			continue
 		}
+
+		// Check if it's time for this car to reroute
+		if w.SimTime < car.NextRerouteTime {
+			continue
+		}
+
+		// Schedule next reroute check: 60 + random(10-60) seconds
+		car.NextRerouteTime = w.SimTime + 60.0 + 10.0 + rand.Float64()*50.0
 
 		car.Mu.RLock()
 
@@ -393,10 +406,23 @@ func (w *World) triggerSmartNavigation() {
 			// check if the route is different
 			if different(newRoute, routeEdgesCopy, targetIdx+1) {
 
-				fmt.Printf("\n--- DEBUG: Car %d Rerouted! ---\n", c.Id)
-				// fmt.Printf("Old Route Tail : %v\n", routeEdgesCopy[targetIdx+1:])
-				// fmt.Printf("New Route from Server: %v\n", newRoute)
-				fmt.Println("----------------------------------")
+				// Check if new route contains any edge already in the prefix (would create cycle)
+				prefixEdges := make(map[int]bool)
+				for _, edgeID := range routeEdgesCopy[:targetIdx+1] {
+					prefixEdges[edgeID] = true
+				}
+
+				hasCycle := false
+				for _, edgeID := range newRoute {
+					if prefixEdges[edgeID] {
+						hasCycle = true
+						break
+					}
+				}
+
+				if hasCycle {
+					return
+				}
 
 				// append the new route to the old route
 				updatedRoute := make([]int, 0)
@@ -409,8 +435,6 @@ func (w *World) triggerSmartNavigation() {
 					c.ActiveRoute.RouteEdges = updatedRoute
 				}
 				c.Mu.Unlock()
-
-				fmt.Printf("SmartNav: Car %d rerouted! Avoiding traffic.\n", c.Id)
 			}
 		}(car, nextNode, destNode, futureIdx)
 	}

@@ -2,11 +2,12 @@ package types
 
 // format of sending a traffic report
 type TrafficReport struct {
-	CarID      int     `json:"car_id"`
-	EdgeID     int     `json:"edge_id"`
-	Speed      float64 `json:"speed"`
-	Timestamp  int64   `json:"timestamp"`
-	RouteEdges []int   `json:"route_edges,omitempty"` // full route for sampled cars
+	CarID        int     `json:"car_id"`
+	EdgeID       int     `json:"edge_id"`
+	Speed        float64 `json:"speed"`
+	Timestamp    int64   `json:"timestamp"`
+	EdgeProgress float64 `json:"edge_progress"`            // 0-1 fraction along current edge
+	RouteEdges   []int   `json:"route_edges,omitempty"`    // full route for sampled cars
 }
 
 // format of asking a navigation request
