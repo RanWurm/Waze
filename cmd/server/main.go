@@ -87,6 +87,7 @@ func main() {
 	http.HandleFunc("/api/traffic", srv.HandleTrafficBatch)
 	http.HandleFunc("/api/navigate", srv.HandleNavigation)
 	http.HandleFunc("/api/save-timings", srv.HandleSaveTimings)
+	http.HandleFunc("/api/graph", srv.HandleGraph)
 	http.HandleFunc("/ws", srv.HandleWebSocket)
 
 	// הגשת קבצי GUI סטטיים

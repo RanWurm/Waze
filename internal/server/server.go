@@ -177,16 +177,12 @@ func (s *Server) applyAggregationToGraph(aggMap map[int]*EdgeAggregator) {
 	}
 }
 
-// calculateCarPositions samples ~10% of cars for GUI display
+// calculateCarPositions converts traffic reports into positions for the 3D visualization
 func (s *Server) calculateCarPositions(reports []types.TrafficReport) []CarPosition {
-	positions := make([]CarPosition, 0, len(reports)/10+1)
+	positions := make([]CarPosition, 0, len(reports))
 
 	for _, report := range reports {
 		if report.CarID == -1 {
-			continue
-		}
-		// Show ~10% of cars consistently by ID
-		if len(reports) >= 100 && report.CarID%10 != 0 {
 			continue
 		}
 
@@ -198,36 +194,22 @@ func (s *Server) calculateCarPositions(reports []types.TrafficReport) []CarPosit
 		fromNode := s.Graph.Nodes[edge.From]
 		toNode := s.Graph.Nodes[edge.To]
 
-		progress := 0.5
+		progress := report.EdgeProgress
+		if progress < 0 || progress > 1 {
+			progress = 0.5
+		}
+
 		x := fromNode.X + (toNode.X-fromNode.X)*progress
 		y := fromNode.Y + (toNode.Y-fromNode.Y)*progress
 
-		pos := CarPosition{
+		positions = append(positions, CarPosition{
 			CarID:    report.CarID,
 			EdgeID:   report.EdgeID,
 			Progress: progress,
 			Speed:    report.Speed,
 			X:        x,
 			Y:        y,
-		}
-
-		// Convert route edges to coordinates for GUI
-		if len(report.RouteEdges) > 0 {
-			route := make([][]float64, 0, len(report.RouteEdges)+1)
-			for _, edgeID := range report.RouteEdges {
-				if e, ok := s.Graph.Edges[edgeID]; ok {
-					fn := s.Graph.Nodes[e.From]
-					if len(route) == 0 {
-						route = append(route, []float64{fn.X, fn.Y})
-					}
-					tn := s.Graph.Nodes[e.To]
-					route = append(route, []float64{tn.X, tn.Y})
-				}
-			}
-			pos.Route = route
-		}
-
-		positions = append(positions, pos)
+		})
 	}
 
 	return positions
@@ -282,6 +264,32 @@ func (s *Server) HandleNavigation(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSaveTimings saves route timing data to CSV
+func (s *Server) HandleGraph(w http.ResponseWriter, r *http.Request) {
+	type GraphResponse struct {
+		Nodes []float64 `json:"nodes"`
+		Edges []float64 `json:"edges"`
+	}
+
+	numNodes := len(s.Graph.IndexNode)
+	nodes := make([]float64, numNodes*2)
+	for i, nodeId := range s.Graph.IndexNode {
+		node := s.Graph.Nodes[nodeId]
+		nodes[i*2] = node.X
+		nodes[i*2+1] = node.Y
+	}
+
+	edges := make([]float64, 0, len(s.Graph.Edges)*4)
+	for _, edge := range s.Graph.Edges {
+		fromIdx := s.Graph.NodeIndex[edge.From]
+		toIdx := s.Graph.NodeIndex[edge.To]
+		edges = append(edges, float64(fromIdx), float64(toIdx), edge.SpeedLimit, edge.Length)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(GraphResponse{Nodes: nodes, Edges: edges})
+}
+
 func (s *Server) HandleSaveTimings(w http.ResponseWriter, r *http.Request) {
 	SaveTimingsToCSV()
 	count, totalMs, avgMs := GetTimingStats()

@@ -42,6 +42,11 @@ type Car struct {
 	LastRouteReq    float64    // time of the last route request
 	NewRouteChan    chan []int // channel for a new route
 	NextRerouteTime float64    // next time this car should check for reroute
+
+	// debug: track route timing
+	RouteElapsed float64
+	RouteSrcNode int
+	RouteDstNode int
 }
 
 func NewCar(id, userId int, currentTime float64) *Car {
@@ -87,6 +92,16 @@ func (car *Car) InitRoute(routeEdges []int, g *graph.Graph) {
 	}
 
 	car.CurrentSpeed = initialSpeed
+	car.RouteElapsed = 0
+
+	// record src and dst for debug
+	if firstEdge, ok := g.Edges[routeEdges[0]]; ok {
+		car.RouteSrcNode = firstEdge.From
+	}
+	if lastEdge, ok := g.Edges[routeEdges[len(routeEdges)-1]]; ok {
+		car.RouteDstNode = lastEdge.To
+	}
+
 	// set state to driving
 	car.State = Driving
 }
@@ -116,6 +131,7 @@ func (car *Car) Move(deltaTime float64, g *graph.Graph, densityMap map[int]int) 
 		car.switchToNextEdge(g)
 	}
 	car.LastRouteReq += deltaTime
+	car.RouteElapsed += deltaTime
 
 }
 
@@ -170,6 +186,11 @@ func (car *Car) switchToNextEdge(g *graph.Graph) {
 
 		// check if we reached end of the route
 		if car.ActiveRoute.CurrentEdgeIndex >= len(car.ActiveRoute.RouteEdges) {
+			if car.RouteElapsed < 130 {
+				fmt.Printf("[DEBUG] Car %d arrived FAST in %.1fs | src=%d dst=%d edges=%d route=%v\n",
+					car.Id, car.RouteElapsed, car.RouteSrcNode, car.RouteDstNode,
+					len(car.ActiveRoute.RouteEdges), car.ActiveRoute.RouteEdges)
+			}
 			fmt.Printf("Car %d arrived (route had %d edges)\n", car.Id, len(car.ActiveRoute.RouteEdges))
 			car.State = Arrived
 			car.CurrentSpeed = 0

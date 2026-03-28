@@ -224,11 +224,20 @@ func (world *World) collectActiveReports() []types.TrafficReport {
 			// if any of the three happened
 			if edgeChanged || speedChanged || maxTime {
 
+				progress := 0.0
+				if car.ActiveRoute.CurrentEdgeLen > 0 {
+					progress = car.ActiveRoute.EdgeProgress / car.ActiveRoute.CurrentEdgeLen
+					if progress > 1 {
+						progress = 1
+					}
+				}
+
 				report := types.TrafficReport{
-					CarID:     car.Id,
-					EdgeID:    currentEdgeId,
-					Speed:     car.CurrentSpeed,
-					Timestamp: world.GetCurrentTime(),
+					CarID:        car.Id,
+					EdgeID:       currentEdgeId,
+					Speed:        car.CurrentSpeed,
+					Timestamp:    world.GetCurrentTime(),
+					EdgeProgress: progress,
 				}
 
 				car.LastReportedEdgeID = currentEdgeId

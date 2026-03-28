@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waze Traffic Simulation</title>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden}
+#map{width:100vw;height:100vh}
+#hud{position:fixed;top:12px;left:12px;z-index:10;background:rgba(255,255,255,.88);backdrop-filter:blur(8px);
+  border-radius:10px;padding:14px 18px;font-family:'Segoe UI',system-ui,sans-serif;font-size:12px;
+  box-shadow:0 2px 12px rgba(0,0,0,.15);min-width:180px;border:1px solid rgba(0,0,0,.08)}
+#hud h1{font-size:14px;font-weight:700;color:#1a73e8;margin-bottom:8px;letter-spacing:1px}
+.row{display:flex;justify-content:space-between;padding:2px 0}
+.row .lab{color:#666}.row .val{font-weight:600;color:#222}
+#status{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:10;
+  background:rgba(255,255,255,.9);border-radius:20px;padding:6px 18px;font-size:11px;
+  font-family:'Segoe UI',system-ui,sans-serif;box-shadow:0 1px 6px rgba(0,0,0,.12)}
+.live{color:#1e8e3e;border:1px solid #1e8e3e33}.dead{color:#c5221f;border:1px solid #c5221f33}
+#load{position:fixed;inset:0;background:#f5f5f5;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;z-index:100;transition:opacity .6s}
+#load.done{opacity:0;pointer-events:none}
+#load .sp{width:40px;height:40px;border:3px solid #e0e0e0;border-top-color:#1a73e8;border-radius:50%;animation:s .7s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+#load p{margin-top:14px;font-size:13px;color:#1a73e8}
+#load .sub{margin-top:4px;font-size:11px;color:#999}
+</style>
+</head>
+<body>
+<div id="load"><div class="sp"></div><p>Loading</p><div class="sub" id="lm">Connecting...</div></div>
+<div id="hud">
+<h1>WAZE TRAFFIC</h1>
+<div class="row"><span class="lab">Vehicles</span><span class="val" id="sc">0</span></div>
+<div class="row"><span class="lab">Avg Speed</span><span class="val" id="ss">&mdash;</span></div>
+<div class="row"><span class="lab">Roads</span><span class="val" id="sr">0</span></div>
+</div>
+<div id="status" class="dead">CONNECTING</div>
+<div id="map"></div>
+
+<script>
+const CENTER = [34.78, 32.08];
+const LERP = 3;
+const STALE = 15000;
+
+/* ── Light 3D map style using OpenFreeMap vector tiles ── */
+const style = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'vector',
+      tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'],
+      maxzoom: 14,
+      attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>'
+    }
+  },
+  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+  layers: [
+    {id:'bg',type:'background',paint:{'background-color':'#f0efe9'}},
+    {id:'water',type:'fill',source:'osm','source-layer':'water',paint:{'fill-color':'#aad3df'}},
+    {id:'waterway',type:'line',source:'osm','source-layer':'waterway',paint:{'line-color':'#aad3df','line-width':1.5}},
+    {id:'landuse-green',type:'fill',source:'osm','source-layer':'landuse',
+      filter:['in','class','park','cemetery','grass'],
+      paint:{'fill-color':'#c8e6c9','fill-opacity':.6}},
+    {id:'landcover',type:'fill',source:'osm','source-layer':'landcover',
+      paint:{'fill-color':'#dcedc8','fill-opacity':.35}},
+    {id:'landuse-other',type:'fill',source:'osm','source-layer':'landuse',
+      filter:['!in','class','park','cemetery','grass','residential'],
+      paint:{'fill-color':'#e8e4db','fill-opacity':.4}},
+
+    // Roads casing
+    {id:'road-cas',type:'line',source:'osm','source-layer':'transportation',
+      filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{
+        'line-color':'#c8c8c0',
+        'line-width':['interpolate',['exponential',1.5],['zoom'],
+          8,['match',['get','class'],'motorway',3,'trunk',2.5,'primary',2,'secondary',1.5,1],
+          18,['match',['get','class'],'motorway',26,'trunk',22,'primary',18,'secondary',14,10]],
+        'line-opacity':['interpolate',['linear'],['zoom'],7,.3,11,1]}},
+
+    // Roads fill
+    {id:'road-fill',type:'line',source:'osm','source-layer':'transportation',
+      filter:['in','class','motorway','trunk','primary','secondary','tertiary','minor','service'],
+      layout:{'line-cap':'round','line-join':'round'},
+      paint:{
+        'line-color':'#ffffff',
+        'line-width':['interpolate',['exponential',1.5],['zoom'],
+          8,['match',['get','class'],'motorway',2,'trunk',1.5,'primary',1.2,'secondary',.8,.5],
+          18,['match',['get','class'],'motorway',22,'trunk',18,'primary',14,'secondary',10,7]],
+        'line-opacity':['interpolate',['linear'],['zoom'],7,.4,11,1]}},
+
+    // Rail
+    {id:'rail',type:'line',source:'osm','source-layer':'transportation',
+      filter:['==','class','rail'],
+      paint:{'line-color':'#bbb','line-width':1.2,'line-dasharray':[3,3]}},
+
+    // Buildings 2D
+    {id:'bld-2d',type:'fill',source:'osm','source-layer':'building',maxzoom:14,
+      paint:{'fill-color':'#d4d0c8','fill-opacity':['interpolate',['linear'],['zoom'],12,0,13,.6]}},
+
+    // Buildings 3D
+    {id:'bld-3d',type:'fill-extrusion',source:'osm','source-layer':'building',minzoom:13.5,
+      paint:{
+        'fill-extrusion-color':'#d4d0c8',
+        'fill-extrusion-height':['interpolate',['linear'],['zoom'],
+          13.5,0,
+          15,['coalesce',['get','render_height'],['*',['coalesce',['get','levels'],3],3.5],10]],
+        'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
+        'fill-extrusion-opacity':['interpolate',['linear'],['zoom'],13.5,0,14.5,.85]}},
+
+    // Road labels
+    {id:'road-lbl',type:'symbol',source:'osm','source-layer':'transportation_name',minzoom:14,
+      layout:{'text-field':'{name}','text-font':['Open Sans Regular'],'text-size':10,
+        'symbol-placement':'line','text-max-angle':25},
+      paint:{'text-color':'#555','text-halo-color':'#fff','text-halo-width':1.5}},
+
+    // Place labels
+    {id:'place-lbl',type:'symbol',source:'osm','source-layer':'place',
+      filter:['in','class','city','town','suburb','neighbourhood'],
+      layout:{'text-field':'{name}','text-font':['Open Sans Regular'],
+        'text-size':['match',['get','class'],'city',16,'town',14,'suburb',12,10]},
+      paint:{'text-color':'#444','text-halo-color':'#fff','text-halo-width':1.8}}
+  ]
+};
+
+const map = new maplibregl.Map({
+  container:'map', style, center:CENTER, zoom:10, pitch:0, bearing:0,
+  maxPitch:72, minZoom:9, maxZoom:18, antialias:true
+});
+
+/* ── Cars ── */
+const cars = new Map;
+let nCars=0, avgS=0, totalRoads=0;
+
+function onCars(data) {
+  const now = Date.now();
+  let sum = 0;
+  for (const c of data) {
+    const ex = cars.get(c.car_id);
+    if (ex) { ex.tx=c.x; ex.ty=c.y; ex.speed=c.speed; ex.t=now; }
+    else cars.set(c.car_id, {cx:c.x,cy:c.y,tx:c.x,ty:c.y,speed:c.speed,t:now});
+    sum += c.speed;
+  }
+  for (const [id,d] of cars) if (now-d.t > STALE) cars.delete(id);
+  nCars = cars.size;
+  avgS = data.length ? sum/data.length : 0;
+}
+
+function spdColor(s) {
+  if (s < 20) return '#c5221f';
+  if (s < 40) return '#e8710a';
+  if (s < 60) return '#f9ab00';
+  return '#1e8e3e';
+}
+
+let last = 0, ready = false;
+function anim(ts) {
+  requestAnimationFrame(anim);
+  if (!ready) return;
+  const dt = Math.min((ts-last)/1000, .1); last=ts;
+  const f = 1 - Math.exp(-LERP*dt);
+  const feats = [];
+  for (const [id,d] of cars) {
+    d.cx += (d.tx-d.cx)*f;
+    d.cy += (d.ty-d.cy)*f;
+    feats.push({type:'Feature',
+      geometry:{type:'Point',coordinates:[d.cx,d.cy]},
+      properties:{color:spdColor(d.speed)}});
+  }
+  const src = map.getSource('cars');
+  if (src) src.setData({type:'FeatureCollection',features:feats});
+}
+
+/* ── Traffic lines from graph ── */
+async function loadTrafficOverlay() {
+  document.getElementById('lm').textContent = 'Loading roads...';
+  const res = await fetch('/api/graph');
+  const data = await res.json();
+  const nf = data.nodes, ef = data.edges;
+  const nn = nf.length/2, ne = ef.length/4;
+  totalRoads = ne;
+
+  const features = [];
+  for (let i = 0; i < ne; i++) {
+    const fi=ef[i*4], ti=ef[i*4+1], sl=ef[i*4+2];
+    const fx=nf[fi*2], fy=nf[fi*2+1];
+    const tx=nf[ti*2], ty=nf[ti*2+1];
+    // color by speed limit as initial state
+    let color = '#1e8e3e'; // green
+    if (sl < 30) color = '#e8710a';
+    else if (sl < 50) color = '#f9ab00';
+    features.push({type:'Feature',
+      geometry:{type:'LineString',coordinates:[[fx,fy],[tx,ty]]},
+      properties:{color, sl}});
+  }
+
+  map.addSource('traffic', {
+    type:'geojson',
+    data:{type:'FeatureCollection',features}
+  });
+
+  // Traffic lines - render UNDER buildings but OVER base roads
+  map.addLayer({
+    id:'traffic-cas',type:'line',source:'traffic',
+    paint:{
+      'line-color':['get','color'],
+      'line-width':['interpolate',['linear'],['zoom'],10,1.5,16,5],
+      'line-opacity':.7
+    }
+  }, 'bld-2d');
+
+  map.addLayer({
+    id:'traffic-line',type:'line',source:'traffic',
+    paint:{
+      'line-color':['get','color'],
+      'line-width':['interpolate',['linear'],['zoom'],10,.8,16,3],
+      'line-opacity':.9
+    }
+  }, 'bld-2d');
+}
+
+/* ── WebSocket ── */
+function connectWS() {
+  const el = document.getElementById('status');
+  const ws = new WebSocket('ws://'+location.host+'/ws');
+  ws.onopen = () => { el.textContent='LIVE'; el.className='live'; };
+  ws.onclose = () => { el.textContent='OFFLINE'; el.className='dead'; setTimeout(connectWS,3000); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = e => { const m=JSON.parse(e.data); if(m.type==='cars') onCars(m.data); };
+}
+
+/* ── HUD ── */
+setInterval(() => {
+  document.getElementById('sc').textContent = nCars.toLocaleString();
+  document.getElementById('ss').textContent = avgS>0 ? Math.round(avgS)+' km/h' : '\u2014';
+  document.getElementById('sr').textContent = totalRoads.toLocaleString();
+}, 500);
+
+/* ── Keyboard ── */
+addEventListener('keydown', e => {
+  if (e.key==='r'||e.key==='R')
+    map.easeTo({center:CENTER,zoom:14,pitch:60,bearing:-20,duration:1200});
+});
+
+/* ── Init ── */
+map.on('load', async () => {
+  map.setLight({anchor:'viewport',color:'#fff',intensity:.3,position:[1.5,90,80]});
+
+  await loadTrafficOverlay();
+
+  // Car source + layers
+  map.addSource('cars',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+
+  map.addLayer({id:'cars-shadow',type:'circle',source:'cars',
+    paint:{'circle-radius':['interpolate',['linear'],['zoom'],10,3,17,10],
+      'circle-color':'#000','circle-blur':1,'circle-opacity':.15}});
+
+  map.addLayer({id:'cars-dot',type:'circle',source:'cars',
+    paint:{'circle-radius':['interpolate',['linear'],['zoom'],10,3,17,8],
+      'circle-color':['get','color'],
+      'circle-stroke-width':1.5,'circle-stroke-color':'#fff'}});
+
+  ready = true;
+  document.getElementById('lm').textContent = 'Ready';
+  setTimeout(() => document.getElementById('load').classList.add('done'), 200);
+
+  // Fly into the city
+  map.easeTo({center:CENTER,zoom:14.5,pitch:60,bearing:-20,duration:2500,
+    easing:t=>1-Math.pow(1-t,3)});
+
+  connectWS();
+  requestAnimationFrame(anim);
+});
+</script>
+</body>
+</html>
