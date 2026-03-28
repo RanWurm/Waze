@@ -40,7 +40,7 @@ WIN_W, WIN_H = 1600, 900
 FOV = 60.0
 NEAR_CLIP = 20.0
 FAR_CLIP = 50000.0
-CAM_START_HEIGHT = 3000.0
+CAM_START_HEIGHT = 2600.0
 CAM_TILT_DEG = 60.0
 MAX_BUILDINGS = 6000
 
@@ -118,8 +118,13 @@ void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c);
     if (d > 0.5) discard;
-    float rim = 1.0 - smoothstep(0.3, 0.5, d);
-    fragColor = vec4(v_color * rim + vec3(1.0) * (1.0 - rim) * 0.3, 1.0);
+    // White outline ring
+    if (d > 0.32) {
+        fragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        return;
+    }
+    // Solid bright fill
+    fragColor = vec4(v_color, 1.0);
 }
 """
 
@@ -492,8 +497,8 @@ class App:
         )
 
         # --- camera ---
-        self.cam_x = 0.0
-        self.cam_z = 0.0
+        self.cam_x = 2200.0
+        self.cam_z = 1785.0
         self.cam_h = CAM_START_HEIGHT
         self.tilt = math.radians(CAM_TILT_DEG)
         self.dragging = False
@@ -661,7 +666,7 @@ class App:
 
     # ─── render HUD overlay ──────────────────────
     def render_hud(self):
-        hud_w, hud_h = 210, 130
+        hud_w, hud_h = 210, 160
         surf = pygame.Surface((hud_w, hud_h), pygame.SRCALPHA)
         # Background with rounded corners
         pygame.draw.rect(surf, (255, 255, 255, 215), (0, 0, hud_w, hud_h), border_radius=10)
@@ -693,6 +698,13 @@ class App:
         status_text = "LIVE" if self.car_data.connected else "OFFLINE"
         st = self.font.render(status_text, True, status_color)
         surf.blit(st, (14, y + 4))
+
+        # Camera info
+        y += 28
+        pygame.draw.line(surf, (220, 220, 220), (14, y - 4), (hud_w - 14, y - 4))
+        cam_info = f"x={self.cam_x:.0f}  z={self.cam_z:.0f}  h={self.cam_h:.0f}"
+        ci = self.font.render(cam_info, True, (120, 120, 120))
+        surf.blit(ci, (14, y))
 
         # Upload to GL texture
         raw = pygame.image.tostring(surf, 'RGBA', True)
@@ -749,7 +761,7 @@ class App:
         # Cars
         if self.car_vao and self.car_count > 0:
             self.prog_car['mvp'].write(m_bytes)
-            pt = max(5.0, min(24.0, 18.0 * (1200.0 / self.cam_h)))
+            pt = max(8.0, min(32.0, 30.0 * (1200.0 / self.cam_h)))
             self.prog_car['point_size'].value = pt
             self.car_vao.render(moderngl.POINTS)
 
