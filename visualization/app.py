@@ -119,7 +119,7 @@ void main() {
     float d = length(c);
     if (d > 0.5) discard;
     // White outline ring
-    if (d > 0.32) {
+    if (d > 0.42) {
         fragColor = vec4(1.0, 1.0, 1.0, 1.0);
         return;
     }
@@ -192,6 +192,7 @@ def to_local(lon, lat):
 
 
 def speed_color(s):
+    """Road color (muted)."""
     if s < 20:
         return (0.77, 0.13, 0.12)
     if s < 40:
@@ -199,6 +200,17 @@ def speed_color(s):
     if s < 60:
         return (0.98, 0.67, 0.00)
     return (0.12, 0.56, 0.24)
+
+
+def car_color(s):
+    """Car color (slightly brighter than road to stand out)."""
+    if s < 20:
+        return (0.90, 0.08, 0.08)
+    if s < 40:
+        return (1.0, 0.35, 0.0)
+    if s < 60:
+        return (1.0, 0.55, 0.0)
+    return (0.05, 0.45, 0.18)
 
 
 def speed_color_vec(sl):
@@ -449,11 +461,12 @@ class App:
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLEBUFFERS, 1)
         pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLESAMPLES, 4)
 
+        display_info = pygame.display.Info()
         self.screen = pygame.display.set_mode(
-            (WIN_W, WIN_H),
+            (display_info.current_w, display_info.current_h - 50),
             pygame.OPENGL | pygame.DOUBLEBUF | pygame.RESIZABLE,
         )
-        self.w, self.h = WIN_W, WIN_H
+        self.w, self.h = self.screen.get_size()
         self.ctx = moderngl.create_context()
         self.ctx.enable(moderngl.DEPTH_TEST)
         self.ctx.enable(moderngl.BLEND)
@@ -517,8 +530,8 @@ class App:
         self.car_vao = None
         self.car_vbo = None
 
-        self.font = pygame.font.SysFont("Arial", 14, bold=True)
-        self.font_title = pygame.font.SysFont("Arial", 16, bold=True)
+        self.font = pygame.font.SysFont("Arial", 16, bold=True)
+        self.font_title = pygame.font.SysFont("Arial", 20, bold=True)
         self.clock = pygame.time.Clock()
         self.hud_timer = 0.0
 
@@ -585,6 +598,10 @@ class App:
             self.bld_vert_count = len(bv) // 3
             print(f"  {self.bld_vert_count // 30:,} buildings")
 
+        # Store node positions for demo mode
+        self.nodes_x = nodes_x
+        self.nodes_z = nodes_z
+
         print("  Done.")
         return True
 
@@ -649,7 +666,7 @@ class App:
         arr = np.zeros((len(positions), 6), dtype='f4')
         total_spd = 0.0
         for i, (x, z, spd) in enumerate(positions):
-            r, g, b = speed_color(spd)
+            r, g, b = car_color(spd)
             arr[i] = (x, 3.0, z, r, g, b)
             total_spd += spd
         self.avg_speed = total_spd / len(positions)
@@ -666,21 +683,21 @@ class App:
 
     # ─── render HUD overlay ──────────────────────
     def render_hud(self):
-        hud_w, hud_h = 210, 160
+        hud_w, hud_h = 260, 200
         surf = pygame.Surface((hud_w, hud_h), pygame.SRCALPHA)
         # Background with rounded corners
-        pygame.draw.rect(surf, (255, 255, 255, 215), (0, 0, hud_w, hud_h), border_radius=10)
-        pygame.draw.rect(surf, (200, 200, 200, 180), (0, 0, hud_w, hud_h), 1, border_radius=10)
+        pygame.draw.rect(surf, (255, 255, 255, 215), (0, 0, hud_w, hud_h), border_radius=8)
+        pygame.draw.rect(surf, (200, 200, 200, 180), (0, 0, hud_w, hud_h), 2, border_radius=8)
 
         # Title
         t = self.font_title.render("WAZE TRAFFIC", True, (26, 115, 232))
         surf.blit(t, (14, 10))
 
         # Divider line
-        pygame.draw.line(surf, (220, 220, 220), (14, 32), (hud_w - 14, 32))
+        pygame.draw.line(surf, (220, 220, 220), (14, 38), (hud_w - 14, 38))
 
         # Stats
-        y = 40
+        y = 48
         stats = [
             ("Vehicles", str(self.car_count)),
             ("Avg Speed", f"{self.avg_speed:.0f} km/h" if self.avg_speed > 0 else "\u2014"),
@@ -691,16 +708,16 @@ class App:
             val = self.font.render(value, True, (34, 34, 34))
             surf.blit(lbl, (14, y))
             surf.blit(val, (hud_w - val.get_width() - 14, y))
-            y += 24
+            y += 26
 
         # Connection status
         status_color = (30, 142, 62) if self.car_data.connected else (197, 34, 31)
         status_text = "LIVE" if self.car_data.connected else "OFFLINE"
         st = self.font.render(status_text, True, status_color)
-        surf.blit(st, (14, y + 4))
+        surf.blit(st, (14, y + 6))
 
         # Camera info
-        y += 28
+        y += 32
         pygame.draw.line(surf, (220, 220, 220), (14, y - 4), (hud_w - 14, y - 4))
         cam_info = f"x={self.cam_x:.0f}  z={self.cam_z:.0f}  h={self.cam_h:.0f}"
         ci = self.font.render(cam_info, True, (120, 120, 120))
@@ -761,7 +778,7 @@ class App:
         # Cars
         if self.car_vao and self.car_count > 0:
             self.prog_car['mvp'].write(m_bytes)
-            pt = max(8.0, min(32.0, 30.0 * (1200.0 / self.cam_h)))
+            pt = max(20.0, min(60.0, 55.0 * (1200.0 / self.cam_h)))
             self.prog_car['point_size'].value = pt
             self.car_vao.render(moderngl.POINTS)
 
@@ -771,11 +788,29 @@ class App:
             self.hud_timer = 0.0
         self.render_hud()
 
+    # ─── generate fake cars for demo mode ────────
+    def _spawn_demo_cars(self, count=200):
+        rng = np.random.RandomState(99)
+        idx = rng.choice(len(self.nodes_x), count, replace=True)
+        speeds = rng.uniform(10, 90, count).astype('f4')
+        with self.car_data.lock:
+            for i in range(count):
+                x = float(self.nodes_x[idx[i]]) + rng.uniform(-30, 30)
+                z = float(self.nodes_z[idx[i]]) + rng.uniform(-30, 30)
+                self.car_data.cars[i] = dict(cx=x, cz=z, tx=x, tz=z,
+                                             speed=float(speeds[i]), t=time.time())
+        self.car_data.connected = True
+
     # ─── main loop ────────────────────────────────
     def run(self):
+        demo = "--demo" in sys.argv
         if not self.load_graph():
             return
-        self.car_data.start()
+        if demo:
+            self._spawn_demo_cars()
+            print("Demo mode: showing fake cars (no server needed).")
+        else:
+            self.car_data.start()
         print("Running. ESC to quit, R to reset camera, drag to pan, scroll to zoom.")
 
         running = True
